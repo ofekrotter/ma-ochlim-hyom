@@ -32,37 +32,43 @@ function phase(over: Partial<PhaseInput> = {}) {
 const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
 
 describe('friendPhase', () => {
-  it('keeps swiping on the first mutual like', () => {
+  it('keeps swiping on any number of mutual likes while I still have cards', () => {
     expect(phase({ mutualIds: ['a'] })).toEqual({ kind: 'swipe' });
     expect(phase({ mutualIds: ['a', 'b', 'c'] })).toEqual({ kind: 'swipe' });
+  });
+
+  it('never interrupts me mid-deck, even at MUTUAL_TARGET shared likes (the "top 5" bug)', () => {
+    expect(MUTUAL_TARGET).toBeGreaterThan(SHORTLIST_MAX);
+    const mutualIds = ids.slice(0, MUTUAL_TARGET);
+    expect(phase({ mutualIds })).toEqual({ kind: 'swipe' });
+    expect(phase({ mutualIds: ids })).toEqual({ kind: 'swipe' });
+    // my friend finished — I still get to finish my own deck
+    expect(phase({ mutualIds, friendStopped: true, friendStillSwiping: false })).toEqual({ kind: 'swipe' });
+    expect(phase({ mutualIds: ['a'], friendStopped: true, friendStillSwiping: false })).toEqual({ kind: 'swipe' });
   });
 
   it('does not pull the other person off the deck when there is nothing in common yet', () => {
     expect(phase({ friendStopped: true, friendStillSwiping: false })).toEqual({ kind: 'swipe' });
   });
 
-  it('shows 1–3 mutuals directly once either person stops', () => {
-    expect(phase({ mutualIds: ['a'], iStopped: true })).toEqual({ kind: 'final', ids: ['a'] });
-    expect(phase({ mutualIds: ['a', 'b'], friendStopped: true, friendStillSwiping: false })).toEqual({
-      kind: 'final',
-      ids: ['a', 'b'],
-    });
-    expect(phase({ mutualIds: ['c', 'a', 'b'], iStopped: true })).toEqual({ kind: 'final', ids: ['c', 'a', 'b'] });
+  it('holds what we have while the friend is still swiping', () => {
+    expect(phase({ mutualIds: ids.slice(0, 5), iStopped: true })).toEqual({ kind: 'holding', ids: ids.slice(0, 5) });
+    expect(phase({ mutualIds: ['a'], iStopped: true })).toEqual({ kind: 'holding', ids: ['a'] });
   });
 
-  it('opens a re-vote when a stop leaves more than 3 mutuals', () => {
-    expect(phase({ mutualIds: ids.slice(0, 4), iStopped: true })).toEqual({
+  it('shows 1–3 mutuals directly once everyone stopped', () => {
+    const done = { iStopped: true, friendStillSwiping: false, friendStopped: true };
+    expect(phase({ mutualIds: ['a'], ...done })).toEqual({ kind: 'final', ids: ['a'] });
+    expect(phase({ mutualIds: ['a', 'b'], ...done })).toEqual({ kind: 'final', ids: ['a', 'b'] });
+    expect(phase({ mutualIds: ['c', 'a', 'b'], ...done })).toEqual({ kind: 'final', ids: ['c', 'a', 'b'] });
+  });
+
+  it('opens a re-vote only when everyone stopped with more than 3 mutuals', () => {
+    expect(phase({ mutualIds: ids.slice(0, 4), iStopped: true, friendStillSwiping: false })).toEqual({
       kind: 'narrow',
       ids: ids.slice(0, 4),
-      reason: 'stopped',
     });
-  });
-
-  it('narrows on its own after a full handful of mutual likes', () => {
-    expect(MUTUAL_TARGET).toBeGreaterThan(SHORTLIST_MAX);
-    const mutualIds = ids.slice(0, MUTUAL_TARGET);
-    expect(phase({ mutualIds })).toEqual({ kind: 'narrow', ids: mutualIds, reason: 'target' });
-    expect(phase({ mutualIds, iStopped: true }).kind).toBe('narrow');
+    expect(phase({ mutualIds: ids.slice(0, 4), iStopped: true, friendStillSwiping: true }).kind).toBe('holding');
   });
 
   it('waits when I stopped and my friend is still swiping with nothing in common', () => {
@@ -75,7 +81,10 @@ describe('friendPhase', () => {
   });
 
   it('drops duplicate ids and keeps deck order', () => {
-    expect(phase({ mutualIds: ['b', 'a', 'b', ''], iStopped: true })).toEqual({ kind: 'final', ids: ['b', 'a'] });
+    expect(phase({ mutualIds: ['b', 'a', 'b', ''], iStopped: true, friendStillSwiping: false })).toEqual({
+      kind: 'final',
+      ids: ['b', 'a'],
+    });
     expect(uniqueIds(['b', 'a', 'b', ''])).toEqual(['b', 'a']);
   });
 });
@@ -217,32 +226,66 @@ describe('narrowing votes', () => {
     ).toEqual({ kind: 'holding', ids: ['a', 'b'] });
   });
 
-  it('a majority stop, or five shared places, narrows the group the same way a pair does', () => {
+  it('a group narrows only after everyone stopped, never on five shared places or a majority', () => {
+    const five = ['a', 'b', 'c', 'd', 'e'];
+    // majority stopped, one still swiping → hold, do not lock
     expect(
-      friendPhase({
-        mutualIds: ['a', 'b'],
-        iStopped: true,
-        friendStillSwiping: true,
-        friendStopped: true,
-        memberCount: 3,
-        stoppedCount: 2,
-      }),
+      friendPhase({ mutualIds: ['a', 'b'], iStopped: true, friendStillSwiping: true, friendStopped: true, memberCount: 3, stoppedCount: 2 }),
+    ).toEqual({ kind: 'holding', ids: ['a', 'b'] });
+    // five shared places while members are mid-deck → everyone keeps swiping
+    expect(
+      friendPhase({ mutualIds: five, iStopped: false, friendStillSwiping: true, friendStopped: false, memberCount: 6, stoppedCount: 0 }),
+    ).toEqual({ kind: 'swipe' });
+    // the last member still swiping is never yanked, even when all others finished
+    expect(
+      friendPhase({ mutualIds: five, iStopped: false, friendStillSwiping: false, friendStopped: true, memberCount: 4, stoppedCount: 3 }),
+    ).toEqual({ kind: 'swipe' });
+    // everyone done
+    expect(
+      friendPhase({ mutualIds: ['a', 'b'], iStopped: true, friendStillSwiping: false, friendStopped: true, memberCount: 3, stoppedCount: 3 }),
     ).toEqual({ kind: 'final', ids: ['a', 'b'] });
     expect(
-      friendPhase({
-        mutualIds: ['a', 'b', 'c', 'd', 'e'],
-        iStopped: false,
-        friendStillSwiping: true,
-        friendStopped: false,
-        memberCount: 6,
-        stoppedCount: 0,
-      }),
-    ).toEqual({ kind: 'narrow', ids: ['a', 'b', 'c', 'd', 'e'], reason: 'target' });
+      friendPhase({ mutualIds: five, iStopped: true, friendStillSwiping: false, friendStopped: true, memberCount: 6, stoppedCount: 6 }),
+    ).toEqual({ kind: 'narrow', ids: five });
   });
 
-  it('falls back to the first 1–3 mutuals when votes cannot be saved', () => {
+  it('falls back to the best-supported 1–3 mutuals when votes cannot be saved', () => {
     expect(fallbackShortlist(ids)).toEqual(['a', 'b', 'c']);
     expect(fallbackShortlist(['only'])).toEqual(['only']);
     expect(fallbackShortlist([])).toEqual([]);
+    const likeCounts = new Map([['a', 2], ['b', 2], ['c', 2], ['d', 3], ['e', 3]]);
+    expect(fallbackShortlist(ids, likeCounts)).toEqual(['d', 'e', 'a']);
+    const votes = new Map([['me', ['f', 'c']], ['pal', ['f']]]);
+    expect(fallbackShortlist(ids, likeCounts, votes)).toEqual(['f', 'c', 'd']);
+  });
+});
+
+describe('narrowing votes reach the database', () => {
+  // Mirror of the like_friend_place round check in
+  // supabase/migrations/20261119160000_allow_narrowing_votes.sql.
+  const accepted = (pRound: number, sessionRound: number) =>
+    (pRound >= 1 && pRound <= sessionRound) || (pRound >= 100 && pRound <= 999 && pRound % 100 === sessionRound);
+
+  it('every vote round the app writes is accepted for the current swipe round', () => {
+    for (let round = 1; round <= 50; round++) {
+      expect(accepted(round, round)).toBe(true);
+      expect(accepted(narrowVoteRound(round), round)).toBe(true);
+    }
+  });
+
+  it('stale or arbitrary rounds stay rejected', () => {
+    expect(accepted(narrowVoteRound(1), 2)).toBe(false);
+    expect(accepted(3, 2)).toBe(false);
+    expect(accepted(0, 2)).toBe(false);
+    expect(accepted(99, 2)).toBe(false);
+    expect(accepted(1002, 2)).toBe(false);
+  });
+
+  it('the migration file keeps the security-definer token check and accepts vote rounds', async () => {
+    const { readFileSync } = await import('node:fs');
+    const sql = readFileSync(new URL('../supabase/migrations/20261119160000_allow_narrowing_votes.sql', import.meta.url), 'utf8');
+    expect(sql).toMatch(/security definer/);
+    expect(sql).toMatch(/private\.assert_member\(p_code, p_member_id, p_token\)/);
+    expect(sql).toMatch(/p_round between 100 and 999 and p_round % 100 = v_round/);
   });
 });
