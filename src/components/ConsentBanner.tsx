@@ -21,7 +21,7 @@ export function ConsentBanner() {
     <div role="dialog" aria-live="polite" aria-label="הסכמה לעוגיות" className="fixed inset-x-3 bottom-3 z-50 mx-auto max-w-md anim-rise rounded-3xl bg-charcoal p-4 text-white shadow-2xl">
       <p className="text-sm leading-relaxed">
         🍪 אנחנו משתמשים בעוגיות למדידה (Google Analytics ו-Meta) כדי לשפר את האפליקציה.{' '}
-        <Link to="/privacy" className="underline">מדיניות פרטיות</Link>
+        <Link to="/privacy" className="underline">פרטיות ותנאים</Link>
       </p>
       <div className="mt-3 flex gap-2">
         <button className="btn flex-1 bg-white px-4 py-2.5 text-charcoal" onClick={() => choose('granted')}>מאשר/ת</button>

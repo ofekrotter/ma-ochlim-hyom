@@ -1,7 +1,9 @@
 /**
  * Match the restaurant list to Wolt venues and write src/data/wolt-venues.ts.
  *
- * Uses Wolt's public, unauthenticated search (the same call their website makes):
+ * Developer-only. The app never calls Wolt. It only ships links that this script
+ * already matched. Wolt has no free official API for this; the search below is
+ * the same unauthenticated call their website makes, so run it rarely and by hand.
  *   POST https://restaurant-api.wolt.com/v1/pages/search
  *   { q, target: "venues", lat, lon }
  * No API key and no paid plan. Requests are one at a time with a pause, and a

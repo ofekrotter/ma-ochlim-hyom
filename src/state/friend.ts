@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { track, trackOnce } from '../lib/analytics';
-import { backend, SessionError, type SessionState } from '../lib/backend';
+import { backend, type SessionState } from '../lib/backend';
 import { RADIUS_MAX } from '../lib/config';
 import { buildDeck, deckFromIds } from '../lib/data';
 import {
@@ -118,15 +118,30 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
         if (!alive) return;
         if (!s) return setStatus('not_found');
         const already = s.members.some((m) => m.member_id === memberId);
-        if (!already) {
-          try {
-            await backend.join(code, memberId, creator);
-          } catch (e) {
-            if (e instanceof SessionError || (e as Error).message === 'full') return setStatus('full');
-            throw e;
+        try {
+          await backend.join(code, memberId, creator);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : '';
+          if (msg === 'full') return setStatus('full');
+          if (msg === 'not-found') return setStatus('not_found');
+          if (msg === 'forbidden') {
+            try {
+              const guard = `mo:rekey:${code}`;
+              if (!sessionStorage.getItem(guard)) {
+                sessionStorage.setItem(guard, '1');
+                idStore().removeItem(`mo:member:${code}`);
+                idStore().removeItem(`mo:room:${code}`);
+                window.location.reload();
+                return;
+              }
+            } catch {
+              /* ignore */
+            }
+            return setStatus('error');
           }
-          if (!creator) track('friend_joined', {});
+          throw e;
         }
+        if (!already && !creator) track('friend_joined', {});
         joined.current = true;
         await refresh();
       } catch {
@@ -283,9 +298,13 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
       const nextRound = session.round + 1;
       const ids = buildDeck(data.restaurants, settings, `${code}:${nextRound}`).map((r) => r.id);
       if (ids.length === 0) return false;
-      const ok = await backend.advanceRound(code, session.round, settings, ids);
-      await refresh();
-      return ok;
+      try {
+        const ok = await backend.advanceRound(code, session.round, settings, ids);
+        await refresh();
+        return ok;
+      } catch {
+        return false;
+      }
     },
     [session, data, code, refresh],
   );

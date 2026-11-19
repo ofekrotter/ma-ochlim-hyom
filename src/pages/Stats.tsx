@@ -48,7 +48,7 @@ export default function Stats() {
   }, []);
 
   async function runSeed() {
-    if (!confirm('לרענן את נתוני המסעדות מ-Google? נשמרות שעות פתיחה ועד 5 תמונות לכל מקום. עדיין כ-90 קריאות Nearby Search (בלי קריאות תמונה בשלב הזה). פעם בחודש מספיק.')) return;
+    if (!confirm('לרענן את נתוני המסעדות מ-Google? כ-90 קריאות Nearby Search, בלי הורדת תמונות. מותר עד 2 רענונים ביממה. תנאי Google מבקשים לא לשמור את הנתונים יותר מ-30 יום.')) return;
     setSeeding(true);
     setSeed(null);
     try {
@@ -67,7 +67,7 @@ export default function Stats() {
         <form onSubmit={(e) => { e.preventDefault(); void load(); }} className="card p-6">
           <h1 className="text-2xl font-extrabold">📊 סטטיסטיקות</h1>
           <label className="mt-4 block text-sm text-ink-soft" htmlFor="pw">סיסמה</label>
-          <input id="pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} className="mt-1 w-full rounded-2xl border border-charcoal/15 px-4 py-3" autoComplete="current-password" />
+          <input id="pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} maxLength={200} className="mt-1 w-full rounded-2xl border border-charcoal/15 px-4 py-3" autoComplete="current-password" />
           {err && <p role="alert" className="mt-2 text-sm text-tomato-dark">{err}</p>}
           <button className="btn-primary mt-4 w-full" disabled={!pw || loading}>{loading ? 'טוען…' : 'כניסה'}</button>
         </form>
@@ -124,6 +124,9 @@ export default function Stats() {
         <p className="mt-1 text-sm text-ink-soft">
           {stats.data ? `${fmtCount(stats.data.count)} מסעדות · עודכן ${new Date(stats.data.generatedAt).toLocaleDateString('he-IL')}` : 'עדיין לא הורץ seed — האפליקציה מציגה נתוני דמו.'} · חדרים פעילים: {stats.activeSessions}
         </p>
+        {stats.data && Date.now() - Date.parse(stats.data.generatedAt) > 25 * 24 * 60 * 60 * 1000 && (
+          <p className="mt-2 text-sm text-tomato-dark">הנתונים בני יותר מ-25 יום. תנאי Google מגבילים שמירה לכ-30 יום, ואז האפליקציה מפסיקה להציג אותם. כדאי לרענן.</p>
+        )}
         <button className="btn-secondary mt-3" disabled={seeding} onClick={runSeed}>{seeding ? 'מריץ… (עד דקה)' : 'רענון נתונים מ-Google Places'}</button>
         {seed && (
           <div className={`mt-3 rounded-2xl p-3 text-sm ${seed.ok ? 'bg-basil/10' : 'bg-tomato-soft'}`}>

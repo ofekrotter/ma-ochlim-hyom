@@ -9,10 +9,12 @@ export function Loading({ text = 'מכינים לכם את השולחן…' }: {
   );
 }
 
-export function DemoBadge() {
+export function DemoBadge({ stale = false }: { stale?: boolean }) {
   return (
     <p className="mb-2 rounded-xl bg-mustard/25 px-3 py-1.5 text-center text-xs">
-      מצב דמו: נתוני מסעדות לדוגמה. אחרי חיבור Google Places יופיעו מסעדות ותמונות אמיתיות.
+      {stale
+        ? 'נתוני Google ישנים מ-30 יום ולא מוצגים, לפי תנאי השימוש שלהם. עד לרענון מוצגות מסעדות לדוגמה.'
+        : 'מצב דמו: נתוני מסעדות לדוגמה. אחרי חיבור Google Places יופיעו מסעדות ותמונות אמיתיות.'}
     </p>
   );
 }

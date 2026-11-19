@@ -61,14 +61,16 @@ export interface Backend {
 export class SessionError extends Error {}
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+/** New rooms. 31^8 is too large to scan. Older links of 4 characters still open until they expire. */
+export const CODE_LENGTH = 8;
 export function randomCode(): string {
-  const bytes = new Uint8Array(4);
+  const bytes = new Uint8Array(CODE_LENGTH);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => ALPHABET[b % ALPHABET.length]).join('');
 }
 export function normalizeCode(raw: string): string {
-  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH);
 }
 export function isValidCode(code: string) {
-  return /^[A-Z2-9]{4}$/.test(code);
+  return /^[A-Z2-9]{8}$/.test(code) || /^[A-Z2-9]{4}$/.test(code);
 }

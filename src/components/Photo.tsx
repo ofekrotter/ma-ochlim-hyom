@@ -42,7 +42,7 @@ export function Photo({ src, cuisine, alt, className = '', eager = false }: { sr
   );
 }
 
-/** Tinder-style segments. Past and current are filled; upcoming stays dim. */
+/** Photo progress segments. Past and current are filled; upcoming stays dim. */
 export function PhotoBars({ count, index }: { count: number; index: number }) {
   if (count <= 1) return null;
   return (

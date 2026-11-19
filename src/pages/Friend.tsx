@@ -21,7 +21,7 @@ import { useFriendSession } from '../state/friend';
 import { DemoBadge, Loading } from './shared';
 
 function inviteText(code: string, url: string) {
-  return `בואו נחליט איפה אוכלים! 🍕🍣🍔\nמחליקים על מסעדות כמו בטינדר, ואז מצמצמים ביחד לכמה מקומות.\nהקוד שלנו: ${code}\n${url}`;
+  return `בואו נחליט איפה אוכלים! 🍕🍣🍔\nמחליקים על מסעדות, ואז מצמצמים ביחד לכמה מקומות.\nהקוד שלנו: ${code}\n${url}`;
 }
 
 function settingsSummary(s: Settings) {
@@ -91,7 +91,7 @@ export default function Friend() {
     return (
       <Screen>
         <TopBar back="/" />
-        <EmptyState emoji="🔑" title="הקוד לא תקין" text="קוד חדר מורכב מ-4 תווים, למשל K7PX.">
+        <EmptyState emoji="🔑" title="הקוד לא תקין" text="קוד חדש הוא 8 תווים, למשל K7PXM3QD. קוד ישן של 4 תווים עדיין נפתח.">
           <Link className="btn-primary" to="/join">הקלדת קוד</Link>
         </EmptyState>
       </Screen>
@@ -354,7 +354,7 @@ export default function Friend() {
               : `${fs.matches.length} מקומות ששניכם אוהבים. ממשיכים להחליק, או שסיימתם ומצמצמים?`}
         </p>
       )}
-      {data.source === 'sample' && <DemoBadge />}
+      {data.source === 'sample' && <DemoBadge stale={data.notice === 'stale'} />}
       <SwipeDeck ref={deckRef} cards={fs.deck} index={fs.myProgress} source={data.source} onSwipe={onSwipe} returning={returning} />
       <SwipeButtons onSkip={() => swipeBtn('left')} onLike={() => swipeBtn('right')} onUndo={undo} canUndo={fs.canUndo} disabled={!swiping} />
 

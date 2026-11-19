@@ -28,11 +28,11 @@ export default function Join() {
           autoCapitalize="characters"
           autoComplete="off"
           autoFocus
-          maxLength={4}
-          placeholder="K7PX"
+          maxLength={8}
+          placeholder="K7PXM3QD"
           value={code}
           onChange={(e) => setCode(normalizeCode(e.target.value))}
-          className="mx-auto mt-8 w-56 rounded-3xl border-2 border-charcoal/10 bg-white py-4 text-center text-4xl font-extrabold uppercase tracking-[0.35em] placeholder:text-charcoal/20 focus:border-tomato"
+          className="mx-auto mt-8 w-full max-w-sm rounded-3xl border-2 border-charcoal/10 bg-white py-4 text-center text-2xl font-extrabold uppercase tracking-[0.18em] placeholder:text-charcoal/20 focus:border-tomato"
         />
         <div className="mt-auto pt-6">
           <button className="btn-primary w-full" disabled={!valid} type="submit">נכנסים 👉</button>

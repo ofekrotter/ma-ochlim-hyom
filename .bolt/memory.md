@@ -13,7 +13,7 @@
 
 ## Visual design & UX direction
 
-- Card-based swipe-to-choose UX (Tinder-like) as the primary decision surface.
+- Card-based swipe-to-choose UX as the primary decision surface.
 - Filter UI for geographic area and cuisine type.
 - Backend: Supabase; exact data models and schema not yet reviewed.
 

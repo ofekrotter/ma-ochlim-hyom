@@ -1,4 +1,5 @@
 import { HAS_SUPABASE, SUPABASE_URL, DECK_LIMIT } from './config';
+import { placesContentFresh } from './publicSafety';
 import { haversine } from './geo';
 import { isOpenAt } from './hours';
 import { photoCountOf, photoQuery } from './photos';
@@ -33,9 +34,16 @@ export function loadRestaurants(): Promise<RestaurantData> {
         '/data/restaurants.json',
         '/data/restaurants.sample.json',
       ].filter(Boolean) as string[];
+      let skippedStale = false;
       for (const src of sources) {
         const d = await fetchJson(src);
-        if (d) return d;
+        if (!d) continue;
+        if (!placesContentFresh(d.source, d.generatedAt)) {
+          skippedStale = true;
+          continue;
+        }
+        if (skippedStale && d.source === 'sample') return { ...d, notice: 'stale' };
+        return d;
       }
       throw new Error('no-data');
     })();

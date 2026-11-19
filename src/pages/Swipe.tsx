@@ -107,7 +107,7 @@ export default function Swipe() {
       <div className="mb-2 h-1 overflow-hidden rounded-full bg-charcoal/10">
         <div className="h-full rounded-full bg-tomato transition-all" style={{ width: `${(run.index / deck.length) * 100}%` }} />
       </div>
-      {data.source === 'sample' && <DemoBadge />}
+      {data.source === 'sample' && <DemoBadge stale={data.notice === 'stale'} />}
       <SwipeDeck ref={deckRef} cards={deck} index={run.index} source={data.source} onSwipe={onSwipe} returning={returning} />
       <SwipeButtons onSkip={() => swipeBtn('left')} onLike={() => swipeBtn('right')} onUndo={undo} canUndo={run.index > 0} />
     </Screen>

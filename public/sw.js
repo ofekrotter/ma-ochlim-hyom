@@ -1,5 +1,5 @@
 // Minimal service worker: makes the app installable and keeps the shell + data available on flaky networks.
-const CACHE = 'mo-v2';
+const CACHE = 'mo-v3';
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/favicon.svg', '/manifest.webmanifest'])).then(() => self.skipWaiting()));
 });
@@ -14,6 +14,8 @@ self.addEventListener('fetch', (e) => {
   // Only same-origin requests (the app shell, assets, bundled data). Database, realtime, photos and
   // analytics go straight to the network; photos are cached by the browser via long-lived headers.
   if (url.origin !== location.origin) return;
+  // Restaurant JSON is revalidated by the app (30-day Places limit). Don't pin a copy here.
+  if (url.pathname.startsWith('/data/')) return;
   // Navigations: network first, fall back to cached shell (SPA).
   if (req.mode === 'navigate') {
     e.respondWith(fetch(req).then((r) => { const copy = r.clone(); caches.open(CACHE).then((c) => c.put('/', copy)); return r; }).catch(() => caches.match('/')));
