@@ -4,6 +4,8 @@ import { backend, type SessionState } from '../lib/backend';
 import { RADIUS_MAX } from '../lib/config';
 import { buildDeck, deckFromIds } from '../lib/data';
 import {
+  activeMemberIds,
+  canDecideWithout,
   candidatePlaceIds,
   fallbackShortlist,
   friendPhase,
@@ -11,6 +13,7 @@ import {
   narrowVoteRound,
   resolveVotes,
   sanitizePicks,
+  syncPlan,
   votersForDecision,
   votesFromLikes,
   type FriendPhase,
@@ -94,22 +97,64 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   const [skipOffline, setSkipOffline] = useState(false);
   const joined = useRef(false);
   const lastLike = useRef<string | null>(null);
+  // Latest own progress, read by the heartbeat and the re-sync without re-creating them.
+  const latest = useRef<{ mine: typeof mine; finished: boolean }>({ mine: null, finished: false });
+  // Set when a write failed or the page came back online / into view: on the next good
+  // read, re-send own likes the server is missing and own progress if it differs.
+  const needsSync = useRef(false);
+  const syncing = useRef(false);
+
+  const writeFailed = useCallback(() => {
+    needsSync.current = true;
+    setOffline(true);
+  }, []);
+
+  const resync = useCallback(
+    async (s: SessionState) => {
+      const cur = latest.current;
+      if (!joined.current || !cur.mine || cur.mine.round !== s.session.round || syncing.current) return false;
+      needsSync.current = false;
+      syncing.current = true;
+      const r = cur.mine.round;
+      const { missingLikes: missing, progressDiffers } = syncPlan({
+        memberId,
+        round: r,
+        myLikes: cur.mine.likes,
+        progress: cur.mine.progress,
+        finished: cur.finished,
+        likes: s.likes,
+        members: s.members,
+      });
+      try {
+        await Promise.all(missing.map((id) => backend.like(code, memberId, r, id)));
+        if (progressDiffers) await backend.updateMember(code, memberId, { round: r, progress: cur.mine.progress, finished: cur.finished });
+        return missing.length > 0 || progressDiffers;
+      } catch {
+        needsSync.current = true;
+        return false;
+      } finally {
+        syncing.current = false;
+      }
+    },
+    [code, memberId],
+  );
 
   const refresh = useCallback(async () => {
     try {
-      const s = await backend.getState(code);
+      let s = await backend.getState(code);
       setOffline(false);
       if (!s) {
         setStatus('not_found');
         return;
       }
+      if (needsSync.current && (await resync(s))) s = (await backend.getState(code)) ?? s;
       setState(s);
       setStatus('ready');
     } catch {
       setOffline(true);
       setStatus((st) => (st === 'loading' ? 'error' : st));
     }
-  }, [code]);
+  }, [code, resync]);
 
   // initial load + join
   useEffect(() => {
@@ -164,8 +209,15 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     };
     const unsub = backend.subscribe(code, debounced);
     const poll = setInterval(() => document.visibilityState === 'visible' && refresh(), 10_000);
-    const onVis = () => document.visibilityState === 'visible' && refresh();
-    const onOnline = () => refresh();
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      needsSync.current = true;
+      void refresh();
+    };
+    const onOnline = () => {
+      needsSync.current = true;
+      void refresh();
+    };
     const onOffline = () => setOffline(true);
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('online', onOnline);
@@ -206,23 +258,28 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   useEffect(() => {
     if (status !== 'ready') return;
     const hb = setInterval(() => {
-      if (joined.current && document.visibilityState === 'visible') backend.updateMember(code, memberId, {}).catch(() => setOffline(true));
+      if (!joined.current || document.visibilityState !== 'visible') return;
+      // Send the real progress every time, so one lost "finished" write cannot leave
+      // the room waiting forever. Unchanged values do not ping the room (DB trigger).
+      const cur = latest.current;
+      const patch = cur.mine ? { round: cur.mine.round, progress: cur.mine.progress, finished: cur.finished } : {};
+      backend.updateMember(code, memberId, patch).catch(writeFailed);
     }, 20_000);
     return () => clearInterval(hb);
-  }, [status, code, memberId]);
+  }, [status, code, memberId, writeFailed]);
 
   const deck: DeckCard[] = useMemo(
     () => (data && session ? deckFromIds(data.restaurants, session.deck, session.settings) : []),
     [data, session],
   );
 
-  // Shared likes this round: both people, or a strict majority once 3+ have joined.
+  // Shared likes this round: both people, or a strict majority once 3+ are taking part.
   // My likes are the optimistic local set so an undo drops a candidate immediately.
   const matches = useMemo(() => {
     if (!state || !mine) return [] as DeckCard[];
     const likesByMember = new Map<string, Set<string>>();
-    const memberIds = state.members.map((m) => m.member_id);
-    if (!memberIds.includes(memberId)) memberIds.push(memberId);
+    // Majority of the people actually taking part: swiped this round, or online now.
+    const memberIds = activeMemberIds(state.members, memberId, round, Date.now(), ONLINE_MS);
     for (const id of memberIds) likesByMember.set(id, new Set());
     for (const l of state.likes) {
       if (l.round !== round || l.member_id === memberId) continue;
@@ -265,11 +322,11 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
       if (dir === 'right') {
         lastLike.current = card.id;
         // Re-read right after our like lands so a match is detected instantly even if realtime lags.
-        backend.like(code, memberId, round, card.id).then(refresh, () => setOffline(true));
+        backend.like(code, memberId, round, card.id).then(refresh, writeFailed);
       }
-      backend.updateMember(code, memberId, { round, progress, finished }).catch(() => setOffline(true));
+      backend.updateMember(code, memberId, { round, progress, finished }).catch(writeFailed);
     },
-    [mine, deck.length, code, memberId, round, refresh],
+    [mine, deck.length, code, memberId, round, refresh, writeFailed],
   );
 
   const undo = useCallback((): { id: string; dir: Dir } | null => {
@@ -283,9 +340,9 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     setHistory((h) => h.slice(0, -1));
     if (last.dir === 'right') backend.unlike(code, memberId, round, last.id).catch(() => undefined);
     setStoppedEarly(false);
-    backend.updateMember(code, memberId, { round, progress, finished: false }).catch(() => undefined);
+    backend.updateMember(code, memberId, { round, progress, finished: false }).catch(writeFailed);
     return last as { id: string; dir: Dir };
-  }, [mine, history, deck, code, memberId, round]);
+  }, [mine, history, deck, code, memberId, round, writeFailed]);
 
   /** New round: 'widen' grows the radius (then drops price/cuisine filters), 'restart' reshuffles. */
   const newRound = useCallback(
@@ -325,12 +382,17 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   const deckDone = Boolean(mine && deck.length > 0 && mine.progress >= deck.length);
   const serverStopped = Boolean(me && me.round === round && me.finished);
   const iStopped = deckDone || (stoppedEarly === null ? serverStopped : stoppedEarly);
+  latest.current = { mine, finished: iStopped };
   const otherStopped = (m: { round: number; finished: boolean; progress: number }) =>
     deck.length > 0 && m.round === round && (m.finished || m.progress >= deck.length);
   const friendStopped = others.some(otherStopped);
   // Someone mid-deck keeps the room open. A member who vanished mid-deck stops
   // counting after VOTE_AWAY_MS of silence, or right away if I chose not to wait.
-  const stillSwipingOthers = deck.length > 0 ? others.filter((m) => !otherStopped(m)) : [];
+  // Someone who opened the link and left without swiping is not waited for.
+  const activeIds = new Set(state ? activeMemberIds(state.members, memberId, round, now, ONLINE_MS) : [memberId]);
+  const activeOthers = others.filter((m) => activeIds.has(m.member_id));
+  const activeCount = Math.max(1, activeIds.size);
+  const stillSwipingOthers = deck.length > 0 ? activeOthers.filter((m) => !otherStopped(m)) : [];
   const swipingOnline = stillSwipingOthers.filter((m) => online(m.last_seen)).length;
   const swipingOffline = stillSwipingOthers.length - swipingOnline;
   const friendStillSwiping = stillSwipingOthers.some((m) =>
@@ -345,7 +407,7 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     iStopped,
     friendStillSwiping,
     friendStopped,
-    memberCount,
+    memberCount: activeCount,
     stoppedCount,
   });
 
@@ -356,13 +418,19 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   const voters = votersForDecision({
     selfId: memberId,
     selfPicks: localPicks ?? picksByMember.get(memberId) ?? null,
-    others: others.map((m) => ({
+    others: activeOthers.map((m) => ({
       memberId: m.member_id,
       online: online(m.last_seen),
       picks: picksByMember.get(m.member_id) ?? null,
     })),
     decideAlone,
   });
+  const decideWithoutOffline =
+    !decideAlone &&
+    canDecideWithout(voters.filter((v) => v.required && v.memberId !== memberId).map((v) => ({
+      online: online(activeOthers.find((m) => m.member_id === v.memberId)?.last_seen ?? ''),
+      picks: v.picks,
+    })));
   const resolution: VoteResolution | null = phase.kind === 'narrow' && !fallbackIds ? resolveVotes(mutualIds, voters, memberId) : null;
   const pendingFriends = voters.filter((v) => v.required && v.memberId !== memberId && !v.picks).length;
 
@@ -370,8 +438,8 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     if (!mine) return;
     setFallbackIds(null);
     setStoppedEarly(true);
-    backend.updateMember(code, memberId, { round, progress: mine.progress, finished: true }).catch(() => setOffline(true));
-  }, [mine, code, memberId, round]);
+    backend.updateMember(code, memberId, { round, progress: mine.progress, finished: true }).catch(writeFailed);
+  }, [mine, code, memberId, round, writeFailed]);
 
   const resumeSwiping = useCallback(() => {
     if (!mine || (deck.length > 0 && mine.progress >= deck.length)) return;
@@ -381,8 +449,8 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     setStoppedEarly(false);
     const voteRound = narrowVoteRound(round);
     Promise.all(mutualIds.map((id) => backend.unlike(code, memberId, voteRound, id))).catch(() => undefined);
-    backend.updateMember(code, memberId, { round, progress: mine.progress, finished: false }).catch(() => setOffline(true));
-  }, [mine, deck.length, mutualIds, code, memberId, round]);
+    backend.updateMember(code, memberId, { round, progress: mine.progress, finished: false }).catch(writeFailed);
+  }, [mine, deck.length, mutualIds, code, memberId, round, writeFailed]);
 
   const submitPicks = useCallback(
     async (ids: string[]) => {
@@ -447,8 +515,14 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     // Anyone with cards left can always go back to their deck.
     canResume: !deckDone,
     memberCount,
+    /** People taking part this round (swiped, or online). Decides pair vs. group rules. */
+    activeCount,
+    /** In the re-vote: someone we wait on is offline and has not voted. */
+    canDecideWithout: decideWithoutOffline,
+    /** The room has places, but none of them are in the restaurant list this browser loaded. */
+    deckMissing: Boolean(session && data && session.deck.length > 0 && deck.length === 0),
     room: {
-      count: memberCount,
+      count: activeCount,
       finished: stoppedCount,
       swiping: (iStopped ? 0 : 1) + stillSwipingOthers.length,
       swipingOnline,

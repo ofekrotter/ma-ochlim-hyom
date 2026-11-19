@@ -5,9 +5,22 @@
 export const PLACES_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 export const PHOTO_MAX_AGE_MS = PLACES_MAX_AGE_MS;
 
-/** New uncached photo downloads per UTC day. Cached redirects do not spend this.
- *  661 places fit under this, and it stays below the 1000/day Google photo quota in the README. */
+/** Legacy daily cap (kept for reference; the photo function now uses the monthly cap below). */
 export const PHOTO_FETCH_DAILY_CAP = 800;
+/**
+ * New Google photo downloads per billing month. Google's free usage for the
+ * "Place Details Photos" SKU is 1,000 per month (then billed per 1,000), so this
+ * leaves ~100 of headroom. Only photo index 0 is ever fetched from Google, and
+ * 661 places fit under this. Cached redirects do not spend it.
+ */
+export const PHOTO_FETCH_MONTHLY_CAP = 900;
+/** Only the first photo of a place is ever downloaded from Google. Extra carousel photos are served only if already cached. */
+export const GOOGLE_PHOTO_INDEXES = [0];
+export function googleMayFetchPhoto(index) {
+  return GOOGLE_PHOTO_INDEXES.includes(index);
+}
+/** Width requested from Google. Cards are ~400 CSS px wide; 480 keeps egress about 3x lower than 800. */
+export const PHOTO_MAX_WIDTH_PX = 480;
 /** Seeds per UTC day. One seed is about 90 Nearby Search calls, so 2 stays under a 200/day quota. */
 export const SEED_DAILY_CAP = 2;
 
@@ -100,6 +113,17 @@ export function slidingWindowAllow(stamps, now, windowMs, max) {
   if (next.length >= max) return { ok: false, stamps: next };
   next.push(now);
   return { ok: true, stamps: next };
+}
+
+/**
+ * Google Maps Platform free usage resets on the 1st at midnight US Pacific time,
+ * so the monthly photo counter is keyed by the Pacific calendar month (YYYY-MM).
+ */
+export function placesBillingMonth(now = Date.now()) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit' }).formatToParts(new Date(now));
+  const y = parts.find((p) => p.type === 'year')?.value;
+  const m = parts.find((p) => p.type === 'month')?.value;
+  return `${y}-${m}`;
 }
 
 export function utcDay(now = Date.now()) {

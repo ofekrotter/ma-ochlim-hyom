@@ -256,3 +256,56 @@ export function fallbackShortlist(
     )
     .slice(0, SHORTLIST_MAX);
 }
+
+/**
+ * Who counts toward the majority (and must be waited for) this round: me, plus
+ * anyone who has swiped or finished this round, plus anyone online right now.
+ * Someone who opened the link and left without swiping (a second browser on the
+ * same phone, a curious tap) no longer raises the bar for everyone else.
+ */
+export function activeMemberIds(
+  members: readonly { member_id: string; round: number; progress: number; finished: boolean; last_seen: string }[],
+  selfId: string,
+  round: number,
+  now: number,
+  onlineMs: number,
+): string[] {
+  const out = [selfId];
+  for (const m of members) {
+    if (m.member_id === selfId) continue;
+    const swiped = m.round === round && (m.progress > 0 || m.finished);
+    const t = Date.parse(m.last_seen);
+    const online = Number.isFinite(t) && now - t < onlineMs;
+    if (swiped || online) out.push(m.member_id);
+  }
+  return uniqueIds(out);
+}
+
+/**
+ * Offer "continue without them" in the re-vote as soon as anyone we are waiting
+ * on is offline and has not voted — not only when the most recently seen friend is away.
+ */
+export function canDecideWithout(others: readonly { online: boolean; picks: string[] | null }[]): boolean {
+  return others.some((o) => !o.online && !(o.picks && o.picks.length > 0));
+}
+
+/**
+ * What this browser must re-send after a failed write or coming back online:
+ * own likes for this round that the server does not have, and whether the
+ * server's copy of my progress differs from mine.
+ */
+export function syncPlan(args: {
+  memberId: string;
+  round: number;
+  myLikes: Iterable<string>;
+  progress: number;
+  finished: boolean;
+  likes: readonly { member_id: string; round: number; place_id: string }[];
+  members: readonly { member_id: string; round: number; progress: number; finished: boolean }[];
+}): { missingLikes: string[]; progressDiffers: boolean } {
+  const onServer = new Set(args.likes.filter((l) => l.member_id === args.memberId && l.round === args.round).map((l) => l.place_id));
+  const missingLikes = uniqueIds([...args.myLikes].filter((id) => !onServer.has(id)));
+  const me = args.members.find((m) => m.member_id === args.memberId);
+  const progressDiffers = !me || me.round !== args.round || me.progress !== args.progress || me.finished !== args.finished;
+  return { missingLikes, progressDiffers };
+}

@@ -10,10 +10,13 @@ function siteUrl(url: string): Plugin {
   };
 }
 
+/** Live site. Open Graph tags must be absolute or LinkedIn shows no preview image. Override with VITE_SITE_URL. */
+export const DEFAULT_SITE_URL = 'https://ofekrotter-ma-ochlim-lnla.bolt.host';
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), tailwindcss(), siteUrl(env.VITE_SITE_URL || '')],
+    plugins: [react(), tailwindcss(), siteUrl(env.VITE_SITE_URL || DEFAULT_SITE_URL)],
     build: { target: 'es2020', sourcemap: false },
   };
 });
