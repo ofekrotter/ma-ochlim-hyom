@@ -11,6 +11,9 @@ export const IconBack = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><pat
 export const IconPin = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M12 21s7-6.1 7-11.5A7 7 0 005 9.5C5 14.9 12 21 12 21z" /><circle cx="12" cy="9.5" r="2.5" /></svg>);
 export const IconShare = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M12 3v13M7 8l5-5 5 5" /><path d="M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6" /></svg>);
 export const IconNav = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><path d="M3 11l18-8-8 18-2-8-8-2z" /></svg>);
+export const IconBag = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="M6 8h12l-1 12H7L6 8z" /><path d="M9 8V7a3 3 0 016 0v1" /></svg>
+);
 export const IconStar = ({ size, ...p }: P) => (<svg {...base(size)} {...p} fill="currentColor" stroke="none"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4L2.8 9.5l6.4-.8z" /></svg>);
 export const IconCopy = ({ size, ...p }: P) => (<svg {...base(size)} {...p}><rect x="9" y="9" width="11" height="11" rx="2.5" /><path d="M15 9V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7a2 2 0 002 2h3" /></svg>);
 export const IconWhatsApp = ({ size = 22, ...p }: P) => (

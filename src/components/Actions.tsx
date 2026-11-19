@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { track } from '../lib/analytics';
 import { mapsLinks } from '../lib/data';
+import { woltSearchUrl } from '../lib/wolt';
 import type { Restaurant } from '../lib/types';
-import { IconNav, IconShare } from './Icons';
+import { IconBag, IconNav, IconShare } from './Icons';
 
 export function NavButtons({ r, context }: { r: Restaurant; context: string }) {
   const links = mapsLinks(r);
+  const wolt = woltSearchUrl(r);
   return (
     <div className="grid grid-cols-2 gap-3">
       <a className="btn-primary !px-4 !text-base" href={links.google} target="_blank" rel="noopener noreferrer" onClick={() => track('navigate_clicked', { app: 'google_maps', context })}>
@@ -13,6 +15,16 @@ export function NavButtons({ r, context }: { r: Restaurant; context: string }) {
       </a>
       <a className="btn bg-[#33ccff] px-4 py-4 text-base text-charcoal shadow-[0_10px_24px_-12px_rgb(51_204_255/0.9)]" href={links.waze} target="_blank" rel="noopener noreferrer" onClick={() => track('navigate_clicked', { app: 'waze', context })}>
         <IconNav size={20} /> נווט ב-Waze
+      </a>
+      <a
+        className="btn col-span-2 bg-[#009DE0] px-4 py-4 text-base text-white shadow-[0_10px_24px_-12px_rgb(0_157_224/0.9)]"
+        href={wolt}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="נפתח חיפוש ב-Wolt. לא כל מסעדה רשומה שם."
+        onClick={() => track('navigate_clicked', { app: 'wolt', context })}
+      >
+        <IconBag size={20} /> הזמינו ב-Wolt
       </a>
     </div>
   );
