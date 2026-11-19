@@ -88,7 +88,7 @@ export function createSupabaseBackend(): Backend {
         .channel(`session-${code}-${Math.random().toString(36).slice(2, 8)}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: `code=eq.${code}` }, onChange)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'session_members', filter: `code=eq.${code}` }, onChange)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'session_likes', filter: `code=eq.${code}` }, onChange)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'session_likes', filter: `code=eq.${code}` }, onChange)
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') onChange(); // catch up after (re)connect
         });

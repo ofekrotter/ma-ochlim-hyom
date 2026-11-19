@@ -6,7 +6,7 @@ import { useFlow } from '../state/flow';
 const FEATURES = [
   { emoji: '🎯', title: 'סינון חכם', text: 'מרחק, מחיר, סוג אוכל — ורק מה שפתוח' },
   { emoji: '👆', title: 'החלקה כמו בטינדר', text: 'ימינה אהבתי, שמאלה דלג' },
-  { emoji: '💘', title: 'מאץ׳ עם חבר', text: 'מחליקים יחד, מסכימים מהר' },
+  { emoji: '💘', title: 'עם חבר', text: 'מחליקים יחד, ומצמצמים ל-1–3 מקומות' },
 ];
 
 const MINI = [
@@ -26,8 +26,8 @@ export default function Landing() {
             <div className={`flex h-40 w-32 items-center justify-center rounded-3xl bg-gradient-to-br ${m.bg} text-6xl shadow-[var(--shadow-card)] ring-4 ring-white`}>{m.e}</div>
           </div>
         ))}
-        <div dir="ltr" className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-full bg-basil px-3 py-1 text-sm font-bold text-white shadow anim-pop" style={{ animationDelay: '400ms' }}>
-          It's a match! 🎉
+        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-full bg-basil px-3 py-1 text-sm font-bold text-white shadow anim-pop" style={{ animationDelay: '400ms' }}>
+          1–3 מקומות 🍽️
         </div>
       </div>
 
