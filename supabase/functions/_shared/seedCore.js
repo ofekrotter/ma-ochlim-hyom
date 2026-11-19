@@ -1,8 +1,14 @@
 // Shared seed logic for Google Places API (New) — runs in both Node 18+ (scripts/seed.mjs)
 // and Deno (supabase/functions/seed). Plain JS on purpose so both runtimes can import it.
 //
-// Cost design: ONE-TIME batch of Nearby Search calls (<= ~90), strict field mask,
-// no reviews / Atmosphere fields. Users never trigger Places calls (photos are cached once).
+// Cost design: ONE batch of Nearby Search calls (90), strict field mask, no reviews /
+// Atmosphere fields. `regularOpeningHours` is an Enterprise field, the same SKU already
+// triggered by rating, userRatingCount and priceLevel, so it does not add calls or a
+// higher tier. Photo resource names (up to 5) come back on that same response; the Photos
+// media endpoint is not called here. Users never trigger Nearby Search. Extra pictures are
+// fetched later, one cached photo call at a time, by the photo function.
+
+import { MAX_PHOTOS } from './photos.js';
 
 export const FIELD_MASK = [
   'places.id',
@@ -15,7 +21,12 @@ export const FIELD_MASK = [
   'places.primaryType',
   'places.types',
   'places.photos',
+  // Enterprise, same SKU as rating/priceLevel. Not currentOpeningHours (stale within a week)
+  // and not Atmosphere fields (reviews, serves*, editorialSummary, …).
+  'places.regularOpeningHours',
 ].join(',');
+
+export { MAX_PHOTOS };
 
 // Type groups: each group = one Nearby Search call per grid point (max 20 results per call).
 export const TYPE_GROUPS = [
@@ -91,6 +102,96 @@ export function buildCalls() {
   return calls;
 }
 
+function num(n) {
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Places `regularOpeningHours` → compact periods, or null when Places has no hours.
+ * null means "unknown" and the app keeps the restaurant.
+ * A period with no `close` means open 24 hours (Places' always-open encoding).
+ * Each period is [openDay, openHour, openMinute, closeDay, closeHour, closeMinute].
+ * closeDay -1 is the 24-hour sentinel.
+ */
+export function compactHours(regularOpeningHours) {
+  const periods = regularOpeningHours && regularOpeningHours.periods;
+  if (!Array.isArray(periods) || periods.length === 0) return null;
+  for (const p of periods) {
+    if (p && p.open && !p.close && Number.isFinite(p.open.day)) {
+      return [[num(p.open.day), num(p.open.hour), num(p.open.minute), -1, 0, 0]];
+    }
+  }
+  const out = [];
+  for (const p of periods) {
+    if (!p || !p.open || !p.close) continue;
+    if (!Number.isFinite(p.open.day) || !Number.isFinite(p.close.day)) continue;
+    out.push([
+      num(p.open.day), num(p.open.hour), num(p.open.minute),
+      num(p.close.day), num(p.close.hour), num(p.close.minute),
+    ]);
+  }
+  return out.length ? out : null;
+}
+
+/** Up to MAX_PHOTOS photo refs. Resource names stay server-side. */
+export function compactPhotos(photos) {
+  if (!Array.isArray(photos)) return [];
+  const out = [];
+  for (const p of photos) {
+    if (!p || !p.name) continue;
+    const author = (p.authorAttributions && p.authorAttributions[0]) || null;
+    out.push({
+      name: p.name,
+      author: author && author.displayName ? author.displayName : '',
+      uri: author && author.uri ? author.uri : '',
+    });
+    if (out.length >= MAX_PHOTOS) break;
+  }
+  return out;
+}
+
+export function cleanPlace(p, area) {
+  const photos = compactPhotos(p.photos);
+  if (photos.length === 0) return null;
+  if (typeof p.rating !== 'number' || p.rating < MIN_RATING) return null;
+  if (!p.userRatingCount || p.userRatingCount < MIN_RATINGS) return null;
+  if (!p.location) return null;
+  const first = photos[0];
+  return {
+    id: p.id,
+    name: (p.displayName && p.displayName.text) || '',
+    address: p.formattedAddress || '',
+    lat: Number(p.location.latitude.toFixed(6)),
+    lng: Number(p.location.longitude.toFixed(6)),
+    rating: p.rating,
+    ratings: p.userRatingCount,
+    price: PRICE[p.priceLevel] ?? null, // null = unknown -> included in every price filter
+    cuisine: deriveCuisine(p.primaryType, p.types),
+    area,
+    photo: first.name, // server-side only (stripped from the public file); first photo, legacy field
+    photos, // server-side only
+    photoAuthor: first.author,
+    photoAuthorUri: first.uri,
+    // null = Places had no regularOpeningHours → client keeps the place
+    hours: compactHours(p.regularOpeningHours),
+  };
+}
+
+/** Browser copy: no photo resource names. `photo` (singular) is kept only in the server file. */
+export function toPublicRestaurant(r) {
+  const { photo, photos, ...rest } = r;
+  const photoCredits = (photos || [])
+    .map((p) => ({ name: p.author || '', uri: p.uri || '' }))
+    .filter((c) => c.name || c.uri);
+  const pub = {
+    ...rest,
+    hasPhoto: Boolean(photo),
+    photoCount: photos && photos.length ? photos.length : photo ? 1 : 0,
+  };
+  if (photoCredits.length) pub.photoCredits = photoCredits;
+  return pub;
+}
+
 async function nearby(apiKey, call, fetchImpl) {
   const res = await fetchImpl('https://places.googleapis.com/v1/places:searchNearby', {
     method: 'POST',
@@ -113,30 +214,6 @@ async function nearby(apiKey, call, fetchImpl) {
   }
   const json = await res.json();
   return json.places || [];
-}
-
-export function cleanPlace(p, area) {
-  const photo = p.photos && p.photos[0];
-  if (!photo || !photo.name) return null;
-  if (typeof p.rating !== 'number' || p.rating < MIN_RATING) return null;
-  if (!p.userRatingCount || p.userRatingCount < MIN_RATINGS) return null;
-  if (!p.location) return null;
-  const author = (photo.authorAttributions && photo.authorAttributions[0]) || null;
-  return {
-    id: p.id,
-    name: (p.displayName && p.displayName.text) || '',
-    address: p.formattedAddress || '',
-    lat: Number(p.location.latitude.toFixed(6)),
-    lng: Number(p.location.longitude.toFixed(6)),
-    rating: p.rating,
-    ratings: p.userRatingCount,
-    price: PRICE[p.priceLevel] ?? null, // null = unknown -> included in every price filter
-    cuisine: deriveCuisine(p.primaryType, p.types),
-    area,
-    photo: photo.name, // server-side only (stripped from the public file)
-    photoAuthor: author ? author.displayName || '' : '',
-    photoAuthorUri: author ? author.uri || '' : '',
-  };
 }
 
 /**
@@ -182,7 +259,7 @@ export async function runSeed({ apiKey, fetchImpl = fetch, log = (_line) => {}, 
     generatedAt,
     source: 'google_places',
     count: restaurants.length,
-    restaurants: restaurants.map(({ photo, ...rest }) => ({ ...rest, hasPhoto: Boolean(photo) })),
+    restaurants: restaurants.map(toPublicRestaurant),
   };
   return { full, publicData, stats };
 }

@@ -8,6 +8,7 @@ import { celebrate } from '../components/confetti';
 import { track } from '../lib/analytics';
 import { RADIUS_MAX } from '../lib/config';
 import { deckFromIds } from '../lib/data';
+import { isOpenAt } from '../lib/hours';
 import type { DeckCard } from '../lib/types';
 import { useRestaurants } from '../state/data';
 import { useFlow } from '../state/flow';
@@ -19,7 +20,9 @@ export default function Result() {
   const { settings, update } = useFlow();
   const { data } = useRestaurants();
   const [run] = useSoloRun();
-  const liked = useMemo(() => (data ? deckFromIds(data.restaurants, run.likes, settings) : []), [data, run.likes, settings]);
+  const now = useMemo(() => new Date(), [data, run.likes]);
+  const likedAll = useMemo(() => (data ? deckFromIds(data.restaurants, run.likes, settings) : []), [data, run.likes, settings]);
+  const liked = useMemo(() => likedAll.filter((r) => isOpenAt(r.hours, now)), [likedAll, now]);
 
   // Head-to-head: champion vs. next challenger until one remains.
   const [champ, setChamp] = useState(0);
@@ -47,13 +50,21 @@ export default function Result() {
   if (!data) return <Loading />;
 
   if (liked.length === 0) {
+    const closed = likedAll.length > 0;
     return (
       <Screen>
         <TopBar back="/swipe" />
-        <EmptyState emoji="🤷" title="שום דבר לא עשה לכם את זה?" text="קורה. אפשר להרחיב את החיפוש או לעבור שוב על הרשימה בסדר אחר.">
-          <button className="btn-primary" onClick={widen}>הרחיבו את החיפוש</button>
-          <button className="btn-secondary" onClick={restart}>מתחילים מחדש</button>
-        </EmptyState>
+        {closed ? (
+          <EmptyState emoji="🌙" title="המקומות שאהבתם כבר סגורים" text="נציג רק מסעדות פתוחות עכשיו. אפשר להתחיל סיבוב חדש, או להרחיב את החיפוש.">
+            <button className="btn-primary" onClick={widen}>הרחיבו את החיפוש</button>
+            <button className="btn-secondary" onClick={restart}>מתחילים מחדש</button>
+          </EmptyState>
+        ) : (
+          <EmptyState emoji="🤷" title="שום דבר לא עשה לכם את זה?" text="קורה. אפשר להרחיב את החיפוש או לעבור שוב על הרשימה בסדר אחר.">
+            <button className="btn-primary" onClick={widen}>הרחיבו את החיפוש</button>
+            <button className="btn-secondary" onClick={restart}>מתחילים מחדש</button>
+          </EmptyState>
+        )}
       </Screen>
     );
   }

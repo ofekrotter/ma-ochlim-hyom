@@ -4,7 +4,7 @@ import { track } from '../lib/analytics';
 import { useFlow } from '../state/flow';
 
 const FEATURES = [
-  { emoji: '🎯', title: 'סינון חכם', text: 'מרחק, מחיר וסוג אוכל' },
+  { emoji: '🎯', title: 'סינון חכם', text: 'מרחק, מחיר, סוג אוכל — ורק מה שפתוח' },
   { emoji: '👆', title: 'החלקה כמו בטינדר', text: 'ימינה אהבתי, שמאלה דלג' },
   { emoji: '💘', title: 'מאץ׳ עם חבר', text: 'מחליקים יחד, מסכימים מהר' },
 ];

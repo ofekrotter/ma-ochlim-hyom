@@ -1,1 +1,0 @@
-{ "rewrites": [{ "source": "/((?!assets/|data/|icons/|.*\\..*).*)", "destination": "/index.html" }] }

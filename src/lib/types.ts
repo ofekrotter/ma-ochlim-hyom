@@ -1,5 +1,9 @@
+import type { OpeningPeriod } from './hours';
+
 export type CuisineKey =
   | 'italian' | 'pizza' | 'sushi' | 'burger' | 'asian' | 'middle_eastern' | 'meat' | 'vegetarian' | 'cafe' | 'other';
+
+export type { OpeningPeriod };
 
 export interface Restaurant {
   id: string;
@@ -13,8 +17,20 @@ export interface Restaurant {
   cuisine: CuisineKey;
   area: string;
   hasPhoto: boolean;
+  /** How many photos the photo function can serve. Omitted on old data → 1 if hasPhoto else 0. */
+  photoCount?: number;
+  /** Per-photo attribution, parallel to photo indexes. Old data uses photoAuthor only. */
+  photoCredits?: { name: string; uri: string }[];
+  /** Sample-data images. Real Places data uses the photo function instead. */
+  demoPhotos?: string[];
   photoAuthor?: string;
   photoAuthorUri?: string;
+  /**
+   * Weekly periods from Places regularOpeningHours.
+   * null or omitted = unknown → the place is still shown.
+   * See `isOpenAt` in hours.ts.
+   */
+  hours?: OpeningPeriod[] | null;
 }
 
 export interface RestaurantData {

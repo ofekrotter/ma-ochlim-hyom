@@ -4,7 +4,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Screen, TopBar } from '../components/Screen';
 import { SwipeButtons, SwipeDeck, useSwipeKeys, type Dir, type SwipeDeckHandle } from '../components/SwipeDeck';
 import { track, trackOnce } from '../lib/analytics';
-import { buildDeck } from '../lib/data';
+import { buildDeck, filterBase, filterCuisine } from '../lib/data';
 import type { DeckCard } from '../lib/types';
 import { useRestaurants } from '../state/data';
 import { useFlow } from '../state/flow';
@@ -19,8 +19,15 @@ export default function Swipe() {
   const deckRef = useRef<SwipeDeckHandle>(null);
   const [returning, setReturning] = useState<{ id: string; dir: Dir } | null>(null);
 
-  const deck = useMemo(() => (data ? buildDeck(data.restaurants, settings, run.seed) : []), [data, settings, run.seed]);
+  const at = useMemo(() => (run.at ? new Date(run.at) : new Date()), [run.at]);
+  useEffect(() => {
+    if (!run.at) setRun((r) => (r.at ? r : { ...r, at: new Date().toISOString() }));
+  }, [run.at, setRun]);
+  const deck = useMemo(() => (data ? buildDeck(data.restaurants, settings, run.seed, at) : []), [data, settings, run.seed, at]);
   const done = data && deck.length > 0 && run.index >= deck.length;
+  const allClosed = Boolean(
+    data && deck.length === 0 && filterCuisine(filterBase(data.restaurants, settings, { now: at, ignoreHours: true }), settings.cuisines).length > 0,
+  );
 
   useEffect(() => {
     if (done) {
@@ -69,9 +76,15 @@ export default function Swipe() {
     return (
       <Screen>
         <TopBar back="/where" />
-        <EmptyState emoji="🔍" title="לא מצאנו מסעדות" text="נסו להגדיל את המרחק, להוסיף רמות מחיר או לבחור עוד סוגי אוכל.">
-          <button className="btn-primary" onClick={() => nav('/where')}>שינוי חיפוש</button>
-        </EmptyState>
+        {allClosed ? (
+          <EmptyState emoji="🌙" title="הכל סגור עכשיו" text="אין מסעדות פתוחות שמתאימות לחיפוש. נסו שוב כשייפתחו, או שנו את האזור והמרחק.">
+            <button className="btn-primary" onClick={() => nav('/where')}>שינוי חיפוש</button>
+          </EmptyState>
+        ) : (
+          <EmptyState emoji="🔍" title="לא מצאנו מסעדות" text="נסו להגדיל את המרחק, להוסיף רמות מחיר או לבחור עוד סוגי אוכל.">
+            <button className="btn-primary" onClick={() => nav('/where')}>שינוי חיפוש</button>
+          </EmptyState>
+        )}
       </Screen>
     );
   }

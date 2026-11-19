@@ -1,10 +1,11 @@
 import { animate, motion, useMotionValue, useReducedMotion, useTransform } from 'motion/react';
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { photoUrl } from '../lib/data';
+import { photoCountOf, photoCreditOf } from '../lib/photos';
 import type { DeckCard, RestaurantData } from '../lib/types';
 import { IconHeart, IconUndo, IconX } from './Icons';
 import { PhotoCredit, Rating, Tags } from './Meta';
-import { Photo } from './Photo';
+import { Photo, PhotoBars } from './Photo';
 
 export type Dir = 'left' | 'right';
 export interface SwipeDeckHandle {
@@ -30,7 +31,7 @@ export const SwipeDeck = forwardRef<SwipeDeckHandle, Props>(function SwipeDeck({
   // Preload the next photos so the next card is instant.
   useEffect(() => {
     for (const c of cards.slice(index + 1, index + 4)) {
-      const src = photoUrl(c, source);
+      const src = photoUrl(c, source, 0);
       if (src) {
         const img = new Image();
         img.decoding = 'async';
@@ -70,16 +71,39 @@ const TopCard = forwardRef<SwipeDeckHandle, { card: DeckCard; source: Restaurant
   ref,
 ) {
   const reduce = useReducedMotion();
+  const count = photoCountOf(card);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const elRef = useRef<HTMLDivElement>(null);
   const x = useMotionValue(returning ? (returning === 'right' ? 500 : -500) : 0);
   const opacity = useMotionValue(1);
   const rotate = useTransform(x, [-320, 320], reduce ? [0, 0] : [-14, 14]);
   const likeOpacity = useTransform(x, [25, THRESHOLD], [0, 1]);
   const skipOpacity = useTransform(x, [-THRESHOLD, -25], [1, 0]);
   const leaving = useRef(false);
+  const down = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (returning) animate(x, 0, { type: 'spring', stiffness: 380, damping: 32 });
   }, [returning, x]);
+
+  // The <img> loads the current frame. Preload only the following one, and only after
+  // the viewer has moved past the first photo — never all of them up front.
+  useEffect(() => {
+    if (photoIndex < 1) return;
+    const next = photoUrl(card, source, photoIndex + 1);
+    if (!next) return;
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = next;
+  }, [card, source, photoIndex]);
+
+  function stepPhoto(dir: -1 | 1) {
+    setPhotoIndex((i) => {
+      const n = i + dir;
+      if (n < 0 || n >= count) return i;
+      return n;
+    });
+  }
 
   function fly(dir: Dir) {
     if (leaving.current) return;
@@ -97,11 +121,31 @@ const TopCard = forwardRef<SwipeDeckHandle, { card: DeckCard; source: Restaurant
 
   return (
     <motion.div
+      ref={elRef}
       className="absolute inset-0 z-20 cursor-grab touch-none active:cursor-grabbing"
       style={{ x, rotate, opacity }}
       drag="x"
       dragMomentum={false}
       dragElastic={1}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        down.current = { x: e.clientX, y: e.clientY };
+      }}
+      onPointerUp={(e) => {
+        const start = down.current;
+        down.current = null;
+        if (!start || leaving.current || count < 2) return;
+        const dx = e.clientX - start.x;
+        const dy = e.clientY - start.y;
+        // Anything past a tap is a swipe (or a failed swipe that snaps back). Photo paging
+        // stays far below THRESHOLD so it cannot like or skip the card.
+        if (Math.abs(dx) > 16 || Math.abs(dy) > 16) return;
+        const target = e.target instanceof Element ? e.target : null;
+        if (target?.closest('a, button')) return;
+        const rect = elRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        stepPhoto(e.clientX < rect.left + rect.width / 2 ? -1 : 1);
+      }}
       onDragEnd={(_, info) => {
         const off = info.offset.x;
         const v = info.velocity.x;
@@ -111,24 +155,28 @@ const TopCard = forwardRef<SwipeDeckHandle, { card: DeckCard; source: Restaurant
       }}
       role="group"
       aria-roledescription="כרטיס מסעדה"
-      aria-label={card.name}
+      aria-label={count > 1 ? `${card.name}, תמונה ${photoIndex + 1} מתוך ${count}` : card.name}
     >
-      <CardFace card={card} source={source} eager />
-      <motion.div style={{ opacity: likeOpacity }} className="pointer-events-none absolute left-5 top-6 -rotate-12 rounded-xl border-4 border-basil bg-white/85 px-3 py-1 text-3xl font-extrabold text-basil" aria-hidden>
+      <CardFace card={card} source={source} eager photoIndex={photoIndex} />
+      <motion.div style={{ opacity: likeOpacity }} className="pointer-events-none absolute left-5 top-12 z-30 -rotate-12 rounded-xl border-4 border-basil bg-white/85 px-3 py-1 text-3xl font-extrabold text-basil" aria-hidden>
         אהבתי
       </motion.div>
-      <motion.div style={{ opacity: skipOpacity }} className="pointer-events-none absolute right-5 top-6 rotate-12 rounded-xl border-4 border-tomato bg-white/85 px-3 py-1 text-3xl font-extrabold text-tomato" aria-hidden>
+      <motion.div style={{ opacity: skipOpacity }} className="pointer-events-none absolute right-5 top-12 z-30 rotate-12 rounded-xl border-4 border-tomato bg-white/85 px-3 py-1 text-3xl font-extrabold text-tomato" aria-hidden>
         דלג
       </motion.div>
     </motion.div>
   );
 });
 
-export function CardFace({ card, source, eager = false }: { card: DeckCard; source: RestaurantData['source']; eager?: boolean }) {
+export function CardFace({ card, source, eager = false, photoIndex = 0 }: { card: DeckCard; source: RestaurantData['source']; eager?: boolean; photoIndex?: number }) {
+  const count = photoCountOf(card);
+  const index = count > 0 ? Math.min(photoIndex, count - 1) : 0;
+  const alt = count > 1 ? `${card.name}, תמונה ${index + 1} מתוך ${count}` : card.name;
   return (
     <article className="card relative h-full w-full select-none overflow-hidden">
-      <Photo src={photoUrl(card, source)} cuisine={card.cuisine} alt={card.name} className="absolute inset-0" eager={eager} />
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-5 pb-4 pt-24 text-white">
+      <Photo src={photoUrl(card, source, index)} cuisine={card.cuisine} alt={alt} className="absolute inset-0" eager={eager} />
+      <PhotoBars count={count} index={index} />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-5 pb-4 pt-24 text-white">
         <h2 className="text-[1.7rem] font-bold leading-tight drop-shadow">{card.name}</h2>
         <div className="mt-1.5 text-[15px]">
           <Rating r={card} light />
@@ -136,8 +184,8 @@ export function CardFace({ card, source, eager = false }: { card: DeckCard; sour
         <div className="mt-2.5">
           <Tags r={card} light />
         </div>
-        <div className="mt-2.5">
-          <PhotoCredit r={card} light />
+        <div className="pointer-events-auto mt-2.5">
+          <PhotoCredit r={card} credit={photoCreditOf(card, index)} light />
         </div>
       </div>
     </article>
