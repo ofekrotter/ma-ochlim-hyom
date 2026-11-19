@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { NavButtons, ShareButton } from '../components/Actions';
 import { celebrate } from '../components/confetti';
+import { useConfirm, useDialogFocus } from '../components/Dialog';
 import { EmptyState } from '../components/EmptyState';
 import { FinalCard } from '../components/Final';
 import { IconCopy, IconWhatsApp } from '../components/Icons';
@@ -12,6 +13,7 @@ import { SwipeButtons, SwipeDeck, useSwipeKeys, type Dir, type SwipeDeckHandle }
 import { track } from '../lib/analytics';
 import { isValidCode, normalizeCode } from '../lib/backend';
 import { CUISINES } from '../lib/cuisines';
+import { cleanAddress } from '../lib/format';
 import { formatDistance } from '../lib/geo';
 import { PICK_CAP, type ShortlistKind } from '../lib/narrow';
 import type { DeckCard, RestaurantData, Settings } from '../lib/types';
@@ -44,6 +46,7 @@ export default function Friend() {
   const [started, setStarted] = useState(() => sessionStorage.getItem(startedKey) === '1');
   const [busyRound, setBusyRound] = useState(false);
   const [showMatches, setShowMatches] = useState(false);
+  const [confirmDialog, ask] = useConfirm();
 
   // Someone who already swiped (refresh / reconnect) skips the lobby.
   useEffect(() => {
@@ -143,10 +146,21 @@ export default function Friend() {
   const url = `${window.location.origin}/s/${code}`;
   const total = fs.deck.length;
 
+  // Leaving keeps your spot (the link brings you back), but the others may wait for you.
+  const leaveRoom = async () => {
+    const ok = await ask({
+      title: 'לצאת מהחדר?',
+      text: 'אפשר לחזור בכל רגע עם הקישור או הקוד, וההתקדמות שלכם נשמרת. עד אז האחרים אולי יחכו לכם.',
+      confirmLabel: 'יציאה מהחדר',
+      cancelLabel: 'נשארים',
+    });
+    if (ok) nav('/');
+  };
+
   const header = (
     <>
       <TopBar
-        back="/"
+        back={leaveRoom}
         right={
           <button className="btn whitespace-nowrap rounded-full bg-white px-3 py-1.5 text-sm font-bold tracking-widest shadow-sm" onClick={() => setStarted(false)} aria-label={`קוד חדר ${code}, הזמנת חבר`}>
             {code}
@@ -154,6 +168,17 @@ export default function Friend() {
         }
       />
       <FriendIndicator friend={fs.friend} room={fs.room} total={total} offline={fs.offline} />
+      {fs.roundNotice && (
+        <div role="status" className="mt-2 flex items-center gap-2 rounded-2xl bg-mustard/25 px-3 py-2 text-sm">
+          <span className="flex-1">
+            {roundNoticeText(fs.roundNotice, fs.activeCount >= 3)}
+          </span>
+          <button type="button" className="btn-ghost !px-2 !py-1 text-xs" onClick={fs.dismissRoundNotice} aria-label="סגירת ההודעה">
+            הבנתי
+          </button>
+        </div>
+      )}
+      {confirmDialog}
     </>
   );
 
@@ -168,9 +193,7 @@ export default function Friend() {
           <p className="mt-2 text-ink-soft">{settingsSummary(fs.session.settings)} · {total} מקומות</p>
           <p className="mt-2 text-sm text-ink-soft">
             {fs.memberCount > 1 ? `${fs.memberCount} אנשים בחדר. ` : ''}
-            {fs.memberCount >= 3
-              ? 'מקום נכנס לרשימה כשרוב האנשים אהבו אותו, ואז מצמצמים ל-1–3.'
-              : 'מקום נכנס לרשימה כששניכם אהבתם אותו, ואז מצמצמים ל-1–3. אפשר לצרף עד 6.'}
+            {lobbyRuleText(fs.activeCount)}
           </p>
         </div>
         {fs.creator && (
@@ -202,6 +225,22 @@ export default function Friend() {
   }
 
   const runRound = async (k: 'widen' | 'restart') => {
+    // A new round resets the room for everyone in it, so ask first.
+    const confirmed = await ask(
+      k === 'restart'
+        ? {
+            title: 'להתחיל מחדש לכולם?',
+            text: 'כל מי שבחדר יקבל כרטיסים חדשים מההתחלה, והלייקים וההצבעות של הסיבוב הזה יימחקו. נודיע לאחרים שהתחלתם סיבוב חדש.',
+            confirmLabel: 'כן, מתחילים מחדש',
+            danger: true,
+          }
+        : {
+            title: 'להרחיב את החיפוש לכולם?',
+            text: 'כל מי שבחדר יעבור לסיבוב חדש עם רדיוס גדול יותר, והלייקים של הסיבוב הזה יימחקו. נודיע לאחרים על השינוי.',
+            confirmLabel: 'כן, מרחיבים',
+          },
+    );
+    if (!confirmed) return;
     setBusyRound(true);
     const ok = await fs.newRound(k);
     setBusyRound(false);
@@ -455,7 +494,13 @@ function RoundButtons({ onRound, busy, quiet = false }: { onRound: (k: 'widen' |
 
 function shortlistCopy(n: number, kind: ShortlistKind | 'direct' | 'fallback' | null, group: boolean): { title: string; text?: string } {
   if (kind === 'compromise') {
-    return { title: n === 1 ? 'הולכים לאכול ב… 🎉' : `נשארו ${n} מקומות`, text: 'לא בחרתם את אותם מקומות, אז אלה שקיבלו הכי הרבה קולות.' };
+    return {
+      title: n === 1 ? 'הולכים לאכול ב… 🎉' : `נשארו ${n} מקומות`,
+      text:
+        n > 3
+          ? 'לא בחרתם את אותם מקומות והיה תיקו, אז כל המקומות שקיבלו הכי הרבה קולות נשארו.'
+          : 'לא בחרתם את אותם מקומות, אז אלה שקיבלו הכי הרבה קולות.',
+    };
   }
   if (kind === 'solo') {
     return {
@@ -508,7 +553,7 @@ function Shortlist({ matches, source }: { matches: DeckCard[]; source: Restauran
           <div className="p-4">
             <h2 className="text-xl font-bold leading-tight">{m.name}</h2>
             <div className="mt-1"><Rating r={m} /></div>
-            {m.address && <p className="mt-1 text-sm text-ink-soft">📍 {m.address}</p>}
+            {cleanAddress(m.address) && <p className="mt-1 text-sm text-ink-soft">📍 {cleanAddress(m.address)}</p>}
             <div className="mt-2"><Tags r={m} /></div>
             <div className="mt-4"><NavButtons r={m} context="friend_shortlist" /></div>
           </div>
@@ -644,21 +689,44 @@ function NarrowVote({
   );
 }
 
+/** Bottom sheet dialog: focus moves in, Tab stays inside, Escape closes, focus returns. */
 function Sheet({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [onClose]);
+  const ref = useRef<HTMLDivElement>(null);
+  useDialogFocus(ref, onClose);
   return (
-    <div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-40 flex items-end justify-center bg-charcoal/60" onClick={onClose}>
-      <div className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-[2rem] bg-cream p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] anim-rise" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-charcoal/60" onClick={onClose}>
+      <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sheet-title"
+        tabIndex={-1}
+        className="max-h-[85dvh] w-full max-w-md overflow-y-auto rounded-t-[2rem] bg-cream p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] anim-rise"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-extrabold">{title}</h2>
-          <button className="btn-ghost" onClick={onClose}>סגירה</button>
+          <h2 id="sheet-title" className="text-2xl font-extrabold">{title}</h2>
+          <button className="btn-ghost" onClick={onClose} data-autofocus>סגירה</button>
         </div>
         {children}
       </div>
     </div>
   );
+}
+
+/**
+ * How a place gets on the list, matching candidatePlaceIds: in a pair both
+ * must like it; once 3+ people are taking part, a majority of them.
+ */
+export function lobbyRuleText(activeCount: number): string {
+  return activeCount >= 3
+    ? 'מקום נכנס לרשימה כשרוב מי שמשתתף אהב אותו, ואז מצמצמים ל-1–3. אפשר להיות עד 6 בחדר.'
+    : 'מקום נכנס לרשימה כשרוב המשתתפים אהבו אותו (בזוג: שניכם), ואז מצמצמים ל-1–3. אפשר להיות עד 6 בחדר.';
+}
+
+export function roundNoticeText(kind: 'restart' | 'widen', group: boolean): string {
+  const who = group ? 'מישהו בחדר' : 'החבר שלך';
+  return kind === 'widen'
+    ? `${who} הרחיב את החיפוש והתחיל סיבוב חדש, אז הכרטיסים התחלפו.`
+    : `${who} התחיל את החדר מחדש, אז הכרטיסים התחלפו ומתחילים מהתחלה.`;
 }

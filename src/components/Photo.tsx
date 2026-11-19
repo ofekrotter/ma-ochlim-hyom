@@ -1,74 +1,70 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { CUISINES } from '../lib/cuisines';
 import { photoUrl } from '../lib/data';
 import { photoCountOf, primaryPhotoIndex } from '../lib/photos';
-import { isPhotoFailed, markPhotoFailed, PHOTO_RETRY_MS, photoSlides, retryUrl, usePhotoFailures } from '../lib/photoFailures';
+import { photoState, requestPhoto, stableSlides, usePhoto, usePhotoLoader, type PhotoPriority } from '../lib/photoLoader';
 import type { CuisineKey, Restaurant, RestaurantData } from '../lib/types';
 
-/** Restaurant photo with a cuisine illustration fallback (no photo / failed load / no backend yet). */
-export function Photo({ src, cuisine, alt, className = '', eager = false }: { src: string | null; cuisine: CuisineKey; alt: string; className?: string; eager?: boolean }) {
-  const [failed, setFailed] = useState(() => isPhotoFailed(src));
-  // One retry with a short pause (busy photo server, flaky network) before the illustration.
-  const [attempt, setAttempt] = useState<0 | 1>(0);
-  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+type PhotoPlace = Pick<Restaurant, 'id' | 'hasPhoto' | 'photoCount' | 'demoPhotos'>;
+
+/**
+ * Restaurant photo with a cuisine illustration fallback (no photo, not cached,
+ * still loading, or no backend yet). The bytes come from the shared photo
+ * loader, so a busy server is retried and never shows a broken image.
+ */
+export function Photo({
+  src,
+  cuisine,
+  alt,
+  className = '',
+  priority = 0,
+}: {
+  src: string | null;
+  cuisine: CuisineKey;
+  alt: string;
+  className?: string;
+  /** Kept for callers; every on-screen photo now loads right away. */
+  eager?: boolean;
+  priority?: PhotoPriority;
+}) {
+  const { status, src: blobSrc } = usePhoto(src, priority);
+  const [shown, setShown] = useState<string | null>(null);
   const c = CUISINES[cuisine] ?? CUISINES.other;
-  const imgSrc = src ? (attempt === 0 ? src : retryUrl(src)) : null;
-  const showImg = Boolean(imgSrc) && !failed;
-  const loaded = Boolean(imgSrc) && loadedSrc === imgSrc;
-
-  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    setFailed(isPhotoFailed(src));
-    setAttempt(0);
-    return () => {
-      if (retryTimer.current) clearTimeout(retryTimer.current);
-      retryTimer.current = null;
-    };
-  }, [src]);
-
-  const onError = () => {
-    if (!src) return;
-    if (attempt === 0) {
-      if (retryTimer.current) clearTimeout(retryTimer.current);
-      retryTimer.current = setTimeout(() => setAttempt(1), PHOTO_RETRY_MS);
-      return;
-    }
-    setFailed(true);
-    markPhotoFailed(src);
-  };
+  const ready = status === 'ok' && Boolean(blobSrc);
+  const visible = ready && shown === blobSrc;
 
   return (
     <div className={`${/\b(absolute|fixed)\b/.test(className) ? '' : 'relative'} overflow-hidden ${className}`} style={{ background: `linear-gradient(140deg, ${c.from}, ${c.to})` }}>
-      {(!showImg || !loaded) && (
+      {!visible && (
         <div className="absolute inset-0 flex items-center justify-center" aria-hidden>
-          <span className="text-[min(34vw,140px)] drop-shadow-[0_8px_16px_rgb(0_0_0/0.18)]">{c.emoji}</span>
+          <span className={`text-[min(34vw,140px)] drop-shadow-[0_8px_16px_rgb(0_0_0/0.18)] ${status === 'loading' || status === 'retrying' ? 'animate-pulse' : ''}`}>{c.emoji}</span>
         </div>
       )}
-      {showImg && loadedSrc && loadedSrc !== imgSrc && (
-        <img src={loadedSrc} alt="" className="absolute inset-0 h-full w-full object-cover" />
-      )}
-      {showImg && imgSrc && (
+      {ready && blobSrc && (
         <img
-          key={imgSrc}
-          src={imgSrc}
+          key={blobSrc}
+          src={blobSrc}
           alt={alt}
           draggable={false}
-          loading={eager ? 'eager' : 'lazy'}
           decoding="async"
-          onLoad={() => setLoadedSrc(imgSrc)}
-          onError={onError}
-          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={() => setShown(blobSrc)}
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${visible ? 'opacity-100' : 'opacity-0'}`}
         />
       )}
+      {!ready && <span className="sr-only">{alt}</span>}
     </div>
   );
 }
 
-/** Photo progress segments. Past and current are filled; upcoming stays dim. */
+/**
+ * Photo progress segments. Past and current are filled; upcoming stays dim.
+ * Follows the page direction (RTL): the first photo is the right-most segment,
+ * like the deck progress bar.
+ */
 export function PhotoBars({ count, index }: { count: number; index: number }) {
   if (count <= 1) return null;
   return (
-    <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex gap-1" dir="ltr" aria-hidden>
+    <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex gap-1" dir="rtl" aria-hidden data-testid="photo-bars">
       {Array.from({ length: count }, (_, i) => (
         <span key={i} className="h-1 flex-1 overflow-hidden rounded-full bg-black/35 shadow-[0_1px_2px_rgb(0_0_0/0.45)]">
           <span className={`block h-full bg-white ${i <= index ? 'w-full' : 'w-0'}`} />
@@ -78,31 +74,59 @@ export function PhotoBars({ count, index }: { count: number; index: number }) {
   );
 }
 
+export interface CardSlides {
+  /** Photo indexes, in display order. Never empty when the place has photos. */
+  slides: number[];
+  /** Every photo's fate is known: show dots and paging only then, so the count never shrinks. */
+  settled: boolean;
+}
+
 /**
- * Photo indexes a card can page through right now. Extra photos that are not
- * cached (the photo function never buys them from Google) drop out once they fail.
+ * Photo indexes a card can show. `probe` (the open card, a final card) also asks
+ * for the card's other photos so the carousel is known up front; the others are
+ * served only if already cached, so this never adds a Google download. Without
+ * `probe` only the photo the card opens on is loaded, falling back to the next
+ * one if it is not available.
  */
-export function useCardSlides(restaurant: Pick<Restaurant, 'id' | 'hasPhoto' | 'photoCount' | 'demoPhotos'>, source: RestaurantData['source']): number[] {
-  usePhotoFailures();
-  return photoSlides(photoCountOf(restaurant), (i) => photoUrl(restaurant, source, i), undefined, primaryPhotoIndex(restaurant));
-}
-
-export function usePhotoIndex(count: number) {
-  const [index, setIndex] = useState(0);
-  const step = useCallback((dir: -1 | 1) => {
-    setIndex((i) => {
-      const cur = Math.max(0, Math.min(i, count - 1));
-      const n = cur + dir;
-      if (n < 0 || n >= count) return cur;
-      return n;
-    });
-  }, [count]);
-  return { index, step, setIndex };
+export function useCardSlides(restaurant: PhotoPlace, source: RestaurantData['source'], probe = false, priority: PhotoPriority = 0): CardSlides {
+  usePhotoLoader();
+  const count = photoCountOf(restaurant);
+  const urlFor = (i: number) => photoUrl(restaurant, source, i);
+  const result = stableSlides(count, urlFor, (u) => photoState(u).status, primaryPhotoIndex(restaurant));
+  const lead = result.slides[0];
+  const leadUrl = lead === undefined ? null : urlFor(lead);
+  const key = Array.from({ length: count }, (_, i) => urlFor(i) ?? '').join('|');
+  useEffect(() => {
+    if (leadUrl) requestPhoto(leadUrl, priority);
+    if (!probe) return;
+    for (const u of key.split('|')) if (u) requestPhoto(u, priority === 0 ? 1 : priority);
+  }, [key, leadUrl, probe, priority]);
+  return result;
 }
 
 /**
- * Photo with tap-left / tap-right paging. Used where the card is NOT a swipe surface
- * (final pick, match). The swipe deck handles taps itself so like/dislike drag still works.
+ * Which photo a carousel is on, by photo index, so a slide that loads late
+ * never moves the picture under the viewer.
+ */
+export function useSlidePosition(slides: number[]) {
+  const [picked, setPicked] = useState<number | null>(null);
+  const slot = picked !== null && slides.includes(picked) ? slides.indexOf(picked) : 0;
+  const current = slides[slot];
+  const step = useCallback(
+    (dir: -1 | 1) => {
+      const n = slot + dir;
+      if (n < 0 || n >= slides.length) return;
+      setPicked(slides[n]);
+    },
+    [slot, slides],
+  );
+  return { slot, current, step };
+}
+
+/**
+ * Photo with tap paging. Used where the card is NOT a swipe surface
+ * (final pick, shortlist). The swipe deck handles taps itself so dragging still works.
+ * RTL: the right half goes back, the left half goes forward.
  */
 export function TappablePhoto({
   restaurant,
@@ -110,33 +134,32 @@ export function TappablePhoto({
   cuisine,
   alt,
   className = '',
-  eager = false,
   onIndexChange,
 }: {
-  restaurant: Pick<Restaurant, 'id' | 'hasPhoto' | 'photoCount' | 'demoPhotos'>;
+  restaurant: PhotoPlace;
   source: RestaurantData['source'];
   cuisine: CuisineKey;
   alt: string;
   className?: string;
   eager?: boolean;
-  onIndexChange?: (index: number) => void;
+  /** The photo on screen, or null while only the illustration shows. */
+  onIndexChange?: (index: number | null) => void;
 }) {
-  const slides = useCardSlides(restaurant, source);
-  const count = slides.length;
-  const { index: pos, step } = usePhotoIndex(count);
-  const slot = Math.min(pos, Math.max(0, count - 1));
-  const index = slides[slot] ?? 0;
+  const { slides, settled } = useCardSlides(restaurant, source, true);
+  const { slot, current, step } = useSlidePosition(slides);
+  const count = settled ? slides.length : 1;
+  const src = current === undefined ? null : photoUrl(restaurant, source, current);
+  const shown = photoState(src).status === 'ok' ? (current ?? null) : null;
   useEffect(() => {
-    onIndexChange?.(index);
-  }, [index, onIndexChange]);
-  const src = photoUrl(restaurant, source, index);
+    onIndexChange?.(shown);
+  }, [shown, onIndexChange]);
   const label = count > 1 ? `${alt}, תמונה ${slot + 1} מתוך ${count}` : alt;
   return (
     <div className={`relative overflow-hidden ${className}`}>
-      <Photo src={src} cuisine={cuisine} alt={label} className="absolute inset-0" eager={eager || slot === 0} />
+      <Photo src={src} cuisine={cuisine} alt={label} className="absolute inset-0" />
       <PhotoBars count={count} index={slot} />
       {count > 1 && (
-        <div className="absolute inset-0 z-10 flex" dir="ltr">
+        <div className="absolute inset-0 z-10 flex" dir="rtl">
           <button type="button" className="h-full w-1/2 cursor-pointer border-0 bg-transparent p-0" aria-label="תמונה קודמת" disabled={slot === 0} onClick={() => step(-1)} />
           <button type="button" className="h-full w-1/2 cursor-pointer border-0 bg-transparent p-0" aria-label="תמונה הבאה" disabled={slot === count - 1} onClick={() => step(1)} />
         </div>
@@ -153,12 +176,12 @@ export function PrimaryPhoto({
   alt,
   className = '',
 }: {
-  restaurant: Pick<Restaurant, 'id' | 'hasPhoto' | 'photoCount' | 'demoPhotos'>;
+  restaurant: PhotoPlace;
   source: RestaurantData['source'];
   cuisine: CuisineKey;
   alt: string;
   className?: string;
 }) {
-  const slides = useCardSlides(restaurant, source);
-  return <Photo src={photoUrl(restaurant, source, slides[0] ?? 0)} cuisine={cuisine} alt={alt} className={className} />;
+  const { slides } = useCardSlides(restaurant, source, false, 1);
+  return <Photo src={photoUrl(restaurant, source, slides[0] ?? 0)} cuisine={cuisine} alt={alt} className={className} priority={1} />;
 }

@@ -12,7 +12,8 @@ import type { CuisineKey } from '../lib/types';
 import { useRestaurants } from '../state/data';
 import { useFlow } from '../state/flow';
 import { markCreator } from '../state/friend';
-import { newSoloRun } from '../state/solo';
+import { useConfirm } from '../components/Dialog';
+import { loadSoloRun, newSoloRun, settingsKey, soloInProgress } from '../state/solo';
 
 export default function Cuisine() {
   const nav = useNavigate();
@@ -21,6 +22,7 @@ export default function Cuisine() {
   const now = useNow();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [confirmDialog, ask] = useConfirm();
 
   const base = useMemo(() => (data ? filterBase(data.restaurants, settings, { now }) : []), [data, settings, now]);
   const counts = useMemo(() => cuisineCounts(base), [base]);
@@ -36,7 +38,29 @@ export default function Cuisine() {
   async function start() {
     if (!data) return;
     if (settings.mode === 'solo') {
-      newSoloRun();
+      const key = settingsKey(settings);
+      const run = loadSoloRun();
+      if (soloInProgress(run)) {
+        // Same filters: go back to the same deck and card.
+        if (run?.key === key) {
+          nav('/swipe');
+          return;
+        }
+        const ok = await ask({
+          title: 'להתחיל חפיסה חדשה?',
+          text: `כבר עברתם על ${run?.index ?? 0} כרטיסים. שינוי הסינון מתחיל את החפיסה מההתחלה, והלייקים שלכם יימחקו.`,
+          confirmLabel: 'כן, מתחילים מחדש',
+          cancelLabel: 'לא, חוזרים לחפיסה',
+          danger: true,
+        });
+        if (!ok) {
+          // Put the filters back, so the deck is exactly the one they left.
+          if (run?.filters) update(run.filters);
+          nav('/swipe');
+          return;
+        }
+      }
+      newSoloRun(settings);
       nav('/swipe');
       return;
     }
@@ -86,6 +110,7 @@ export default function Cuisine() {
           {busy ? 'יוצרים חדר…' : settings.mode === 'solo' ? 'מתחילים להחליק 👆' : 'יוצרים חדר ומזמינים חבר 👯'}
         </button>
       </div>
+      {confirmDialog}
     </Screen>
   );
 }

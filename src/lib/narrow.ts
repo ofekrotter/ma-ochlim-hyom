@@ -195,10 +195,16 @@ export function votersForDecision(args: {
 }
 
 /**
- * Overlap of 1–3 wins. No overlap → up to 3 places with the most votes
- * (deck order breaks ties). One voter left in the room → their picks.
+ * Overlap of 1–3 wins. No overlap → the places with the most votes: up to 3,
+ * plus any place tied with the third (see cutWithTies). One voter left in the
+ * room → their picks.
  */
-export function resolveVotes(mutualIds: string[], voters: Voter[], selfId: string): VoteResolution {
+export function resolveVotes(
+  mutualIds: string[],
+  voters: Voter[],
+  selfId: string,
+  opts: { likeCounts?: ReadonlyMap<string, number>; seed?: string } = {},
+): VoteResolution {
   const order = new Map(uniqueIds(mutualIds).map((id, i) => [id, i]));
   const mutual = [...order.keys()];
   const norm = (picks: string[] | null): string[] | null => {
@@ -229,7 +235,52 @@ export function resolveVotes(mutualIds: string[], voters: Voter[], selfId: strin
   const ranked = mutual
     .filter((id) => (counts.get(id) ?? 0) > 0)
     .sort((a, b) => (counts.get(b)! - counts.get(a)!) || order.get(a)! - order.get(b)!);
-  return { status: 'ready', ids: ranked.slice(0, SHORTLIST_MAX), kind: 'compromise' };
+  return { status: 'ready', ids: cutWithTies(ranked, counts, opts), kind: 'compromise' };
+}
+
+/**
+ * A shortlist can grow past SHORTLIST_MAX only to keep places that tied at the
+ * cut, and never past this. Two people with 3 different picks each is 6.
+ */
+export const TIE_KEEP_MAX = 6;
+
+/** Deterministic, order-free number for an id (FNV-1a). Same on every phone. */
+export function stableHash(text: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * The top SHORTLIST_MAX by votes, but fair at the cut: every place tied with
+ * the last one kept stays too (nobody's picks win just because of deck order or
+ * who voted first). If that would pass TIE_KEEP_MAX (a big group where nearly
+ * every pick differs), keeping them all would not narrow anything, so the tied
+ * places are ordered by how many people liked them while swiping, then by a
+ * hash of the room seed and place id (the same on every phone, unrelated to who
+ * voted first or deck position), and the list is cut back to SHORTLIST_MAX.
+ */
+export function cutWithTies(
+  ranked: string[],
+  votes: ReadonlyMap<string, number>,
+  opts: { likeCounts?: ReadonlyMap<string, number>; seed?: string } = {},
+): string[] {
+  if (ranked.length <= SHORTLIST_MAX) return ranked;
+  const cutVotes = votes.get(ranked[SHORTLIST_MAX - 1]) ?? 0;
+  const above = ranked.filter((id) => (votes.get(id) ?? 0) > cutVotes);
+  const tied = ranked.filter((id) => (votes.get(id) ?? 0) === cutVotes);
+  if (above.length + tied.length <= TIE_KEEP_MAX) return [...above, ...tied];
+  const seed = opts.seed ?? '';
+  const fair = [...tied].sort(
+    (a, b) =>
+      (opts.likeCounts?.get(b) ?? 0) - (opts.likeCounts?.get(a) ?? 0) ||
+      stableHash(`${seed}:${a}`) - stableHash(`${seed}:${b}`) ||
+      (a < b ? -1 : a > b ? 1 : 0),
+  );
+  return [...above, ...fair].slice(0, SHORTLIST_MAX);
 }
 
 /**
@@ -308,4 +359,11 @@ export function syncPlan(args: {
   const me = args.members.find((m) => m.member_id === args.memberId);
   const progressDiffers = !me || me.round !== args.round || me.progress !== args.progress || me.finished !== args.finished;
   return { missingLikes, progressDiffers };
+}
+
+export type RoundNotice = 'restart' | 'widen';
+
+/** What changed when the round number went up: a wider radius, or a reshuffle. */
+export function roundChangeNotice(prev: { round: number; radius: number }, next: { round: number; radius: number }): RoundNotice {
+  return next.radius > prev.radius ? 'widen' : 'restart';
 }

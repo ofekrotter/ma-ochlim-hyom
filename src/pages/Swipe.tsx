@@ -13,9 +13,11 @@ import { DemoBadge, Loading } from './shared';
 
 export default function Swipe() {
   const nav = useNavigate();
-  const { settings } = useFlow();
+  const { settings: flowSettings } = useFlow();
   const { data, error, retry } = useRestaurants();
   const [run, setRun] = useSoloRun();
+  // The deck keeps the filters it started with; changing them goes through /cuisine, which asks first.
+  const settings = useMemo(() => (run.filters ? { ...flowSettings, ...run.filters } : flowSettings), [flowSettings, run.filters]);
   const deckRef = useRef<SwipeDeckHandle>(null);
   const [returning, setReturning] = useState<{ id: string; dir: Dir } | null>(null);
 

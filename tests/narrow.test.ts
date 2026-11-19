@@ -143,7 +143,9 @@ describe('narrowing votes', () => {
     expect(resolveVotes(mutual, voters, 'me')).toEqual({ status: 'ready', ids: ['c'], kind: 'agreement' });
   });
 
-  it('uses the most-picked places when there is no overlap', () => {
+  // QA: with no overlap every place had 1 vote, and deck order kept only one
+  // person's picks. A tie at the cut now keeps every tied place.
+  it('keeps every place tied at the cut instead of one person\'s picks', () => {
     const mutual = ['a', 'b', 'c', 'd', 'e', 'f'];
     const voters: Voter[] = [
       { memberId: 'me', picks: ['a', 'b', 'c'], required: true },
@@ -151,12 +153,12 @@ describe('narrowing votes', () => {
     ];
     expect(resolveVotes(mutual, voters, 'me')).toEqual({
       status: 'ready',
-      ids: ['a', 'b', 'c'],
+      ids: ['a', 'b', 'c', 'd', 'e', 'f'],
       kind: 'compromise',
     });
   });
 
-  it('ranks a 2-vote place ahead of a 1-vote place, then deck order', () => {
+  it('ranks a 2-vote place ahead of 1-vote places, keeping the tied ones', () => {
     const mutual = ['a', 'b', 'c', 'd'];
     const voters: Voter[] = [
       { memberId: 'me', picks: ['a', 'c'], required: true },
@@ -165,7 +167,8 @@ describe('narrowing votes', () => {
     ];
     const result = resolveVotes(mutual, voters, 'me');
     expect(result.kind).toBe('compromise');
-    expect(result.ids).toEqual(['b', 'c', 'a']);
+    // a and d tie for the last place, so both stay.
+    expect(result.ids).toEqual(['b', 'c', 'a', 'd']);
   });
 
   it('lets the remaining person decide when the friend has left', () => {

@@ -7,6 +7,10 @@
 // photos, else 0 — see googlePhotoIndexFor), only for a photo name that is already
 // in our seeded file, and only while the monthly cap (and short in-isolate burst
 // caps) still has room. Extra carousel photos are served only if already cached.
+// Two requests for the same uncached photo at once share one Google download.
+// Error answers are short text; the app loads photos with fetch(), so it can
+// tell 404 (not available: show the next photo or the illustration) from 429
+// (busy: retry with backoff) instead of an <img> hitting Chrome's ORB block.
 // The API key never leaves this function.
 import { adminClient } from '../_shared/admin.ts';
 import { corsHeaders } from '../_shared/http.ts';
@@ -29,6 +33,18 @@ const MAX_BYTES = 1_500_000;
 let placesCache: { at: number; map: Map<string, string[]>; fresh: boolean } | null = null;
 let requestStamps: number[] = [];
 let fetchStamps: number[] = [];
+/** Google downloads per minute in this isolate. The monthly cap below is what bounds cost. */
+const GOOGLE_PER_MINUTE = 20;
+
+type Bought = { kind: 'ok'; bytes: Uint8Array; type: string } | { kind: 'busy' } | { kind: 'none'; maxAge: number };
+/** Same photo asked for twice at once (two friends, one new card): one Google download, both get it. */
+const inflight = new Map<string, Promise<Bought>>();
+
+function answer(b: Bought): Response {
+  if (b.kind === 'ok') return new Response(b.bytes.slice(), { status: 200, headers: { ...corsHeaders, 'Content-Type': b.type, 'Cache-Control': MONTH } });
+  if (b.kind === 'busy') return busy();
+  return notFound('photo unavailable', b.maxAge);
+}
 
 async function loadManifest(sb: ReturnType<typeof adminClient>) {
   if (placesCache && Date.now() - placesCache.at < 60 * 1000) return placesCache;
@@ -91,32 +107,46 @@ Deno.serve(async (req) => {
     const name = names[index];
     if (!name || !isPlacesPhotoName(name)) return notFound('unknown place', 3600);
 
-    // Everything below calls Google, so it is rate limited.
-    const burst = slidingWindowAllow(requestStamps, Date.now(), 60_000, 60);
-    requestStamps = burst.stamps;
-    if (!burst.ok) return busy();
+    // Someone is already downloading this exact photo: wait for that instead of a second download.
+    const shared = inflight.get(path);
+    if (shared) return answer(await shared);
+    let settle: (b: Bought) => void = () => undefined;
+    inflight.set(path, new Promise<Bought>((resolve) => (settle = resolve)));
+    let result: Bought = { kind: 'none', maxAge: 60 };
+    try {
+      result = await (async (): Promise<Bought> => {
+        // Everything below calls Google, so it is rate limited.
+        const burst = slidingWindowAllow(requestStamps, Date.now(), 60_000, 60);
+        requestStamps = burst.stamps;
+        if (!burst.ok) return { kind: 'busy' };
 
-    const key = Deno.env.get('GOOGLE_PLACES_API_KEY');
-    if (!key) return notFound('photo unavailable');
+        const key = Deno.env.get('GOOGLE_PLACES_API_KEY');
+        if (!key) return { kind: 'none', maxAge: 60 };
 
-    const googleBurst = slidingWindowAllow(fetchStamps, Date.now(), 60_000, 8);
-    fetchStamps = googleBurst.stamps;
-    if (!googleBurst.ok) return busy();
+        const googleBurst = slidingWindowAllow(fetchStamps, Date.now(), 60_000, GOOGLE_PER_MINUTE);
+        fetchStamps = googleBurst.stamps;
+        if (!googleBurst.ok) return { kind: 'busy' };
 
-    // Monthly free-usage cap (Google's month: US Pacific). When it is spent, the app shows its placeholder.
-    const slot = await sb.rpc('consume_daily_slot', { p_bucket: `photo:${placesBillingMonth()}`, p_limit: PHOTO_FETCH_MONTHLY_CAP });
-    if (slot.error || slot.data !== true) return notFound('photo unavailable', 3600);
-    const g = await fetch(
-      `https://places.googleapis.com/v1/${name}/media?maxWidthPx=${PHOTO_MAX_WIDTH_PX}&key=${encodeURIComponent(key)}`,
-      { signal: AbortSignal.timeout(8000) },
-    );
-    if (!g.ok) return notFound('photo unavailable');
-    const type = g.headers.get('content-type') ?? '';
-    if (!/^image\/(jpeg|png|webp|gif)(\s|;|$)/i.test(type)) return notFound('photo unavailable');
-    const bytes = new Uint8Array(await g.arrayBuffer());
-    if (bytes.byteLength < 32 || bytes.byteLength > MAX_BYTES) return notFound('photo unavailable');
-    await bucket.upload(path, bytes, { contentType: type, upsert: true, cacheControl: '2592000' });
-    return new Response(bytes, { status: 200, headers: { ...corsHeaders, 'Content-Type': type, 'Cache-Control': MONTH } });
+        // Monthly free-usage cap (Google's month: US Pacific). When it is spent, the app shows its placeholder.
+        const slot = await sb.rpc('consume_daily_slot', { p_bucket: `photo:${placesBillingMonth()}`, p_limit: PHOTO_FETCH_MONTHLY_CAP });
+        if (slot.error || slot.data !== true) return { kind: 'none', maxAge: 3600 };
+        const g = await fetch(
+          `https://places.googleapis.com/v1/${name}/media?maxWidthPx=${PHOTO_MAX_WIDTH_PX}&key=${encodeURIComponent(key)}`,
+          { signal: AbortSignal.timeout(8000) },
+        );
+        if (!g.ok) return { kind: 'none', maxAge: 60 };
+        const type = g.headers.get('content-type') ?? '';
+        if (!/^image\/(jpeg|png|webp|gif)(\s|;|$)/i.test(type)) return { kind: 'none', maxAge: 60 };
+        const bytes = new Uint8Array(await g.arrayBuffer());
+        if (bytes.byteLength < 32 || bytes.byteLength > MAX_BYTES) return { kind: 'none', maxAge: 60 };
+        await bucket.upload(path, bytes, { contentType: type, upsert: true, cacheControl: '2592000' });
+        return { kind: 'ok', bytes, type };
+      })();
+    } finally {
+      settle(result);
+      inflight.delete(path);
+    }
+    return answer(result);
   } catch {
     return notFound('photo unavailable');
   }

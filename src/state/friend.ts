@@ -16,7 +16,9 @@ import {
   syncPlan,
   votersForDecision,
   votesFromLikes,
+  roundChangeNotice,
   type FriendPhase,
+  type RoundNotice,
   type VoteResolution,
 } from '../lib/narrow';
 import type { DeckCard, RestaurantData, Settings } from '../lib/types';
@@ -139,15 +141,24 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     [code, memberId],
   );
 
+  // Reads can overlap (a like and a progress ping arrive together). Only the newest
+  // read may set the state: an older answer landing late used to put a friend's
+  // progress one card behind until the next poll.
+  const readSeq = useRef(0);
+  const appliedSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++readSeq.current;
     try {
       let s = await backend.getState(code);
       setOffline(false);
+      if (seq < appliedSeq.current) return;
       if (!s) {
         setStatus('not_found');
         return;
       }
       if (needsSync.current && (await resync(s))) s = (await backend.getState(code)) ?? s;
+      if (seq < appliedSeq.current) return;
+      appliedSeq.current = seq;
       setState(s);
       setStatus('ready');
     } catch {
@@ -237,6 +248,19 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   const me = state?.members.find((m) => m.member_id === memberId) ?? null;
   const others = (state?.members ?? []).filter((m) => m.member_id !== memberId);
   const friend = others.sort((a, b) => +new Date(b.last_seen) - +new Date(a.last_seen))[0] ?? null;
+
+  // A new round started by someone else: tell this person why their cards changed.
+  const startedRoundHere = useRef<number | null>(null);
+  const [roundNotice, setRoundNotice] = useState<RoundNotice | null>(null);
+  const prevSession = useRef<{ round: number; radius: number } | null>(null);
+  useEffect(() => {
+    if (!session) return;
+    const prev = prevSession.current;
+    prevSession.current = { round: session.round, radius: session.settings.radius };
+    if (!prev || session.round <= prev.round) return;
+    if (startedRoundHere.current === session.round) return;
+    setRoundNotice(roundChangeNotice(prev, { round: session.round, radius: session.settings.radius }));
+  }, [session]);
 
   // initialise / re-initialise own local state from the server (first load, refresh, new round)
   useEffect(() => {
@@ -358,6 +382,8 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
       const nextRound = session.round + 1;
       const ids = buildDeck(data.restaurants, settings, `${code}:${nextRound}`).map((r) => r.id);
       if (ids.length === 0) return false;
+      startedRoundHere.current = nextRound;
+      setRoundNotice(null);
       try {
         const ok = await backend.advanceRound(code, session.round, settings, ids);
         await refresh();
@@ -431,7 +457,13 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
       online: online(activeOthers.find((m) => m.member_id === v.memberId)?.last_seen ?? ''),
       picks: v.picks,
     })));
-  const resolution: VoteResolution | null = phase.kind === 'narrow' && !fallbackIds ? resolveVotes(mutualIds, voters, memberId) : null;
+  const swipeLikeCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of state?.likes ?? []) if (l.round === round) m.set(l.place_id, (m.get(l.place_id) ?? 0) + 1);
+    return m;
+  }, [state?.likes, round]);
+  const resolution: VoteResolution | null =
+    phase.kind === 'narrow' && !fallbackIds ? resolveVotes(mutualIds, voters, memberId, { likeCounts: swipeLikeCounts, seed: `${code}:${round}` }) : null;
   const pendingFriends = voters.filter((v) => v.required && v.memberId !== memberId && !v.picks).length;
 
   const stopSwiping = useCallback(() => {
@@ -538,5 +570,9 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     useFallback,
     newRound,
     refresh,
+    /** Someone else started a new round (restart or wider radius) — shown once, until dismissed. */
+    roundNotice,
+    dismissRoundNotice: () => setRoundNotice(null),
   };
 }
+

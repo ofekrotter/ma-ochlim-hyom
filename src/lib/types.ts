@@ -1,7 +1,7 @@
 import type { OpeningPeriod } from './hours';
 
 export type CuisineKey =
-  | 'italian' | 'pizza' | 'sushi' | 'burger' | 'asian' | 'middle_eastern' | 'meat' | 'vegetarian' | 'cafe' | 'other';
+  | 'italian' | 'pizza' | 'sushi' | 'burger' | 'asian' | 'middle_eastern' | 'meat' | 'vegetarian' | 'cafe' | 'bar' | 'other';
 
 export type { OpeningPeriod };
 

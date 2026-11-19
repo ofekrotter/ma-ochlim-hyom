@@ -1,3 +1,5 @@
+// Superseded for display by photoLoader.ts (fetch-based, retries busy answers).
+// photoSlides stays as the pure ordering rule the tests pin down.
 // Remembers, for this page load, which photo URLs could not be shown after a retry.
 // Extra carousel photos that are not cached return 404 from the photo function;
 // the carousel drops those slides instead of showing a broken or empty frame.
