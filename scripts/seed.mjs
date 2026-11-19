@@ -3,6 +3,8 @@
 //
 //   GOOGLE_PLACES_API_KEY=... npm run seed
 //
+// 90 Nearby Search calls. Opening hours and up to 5 photo references are fields on
+// those calls — this script does not download photo bytes.
 // Writes public/data/restaurants.json (bundled with the site).
 // If SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are also set, it uploads the data to Supabase
 // Storage too, so the photo function can find photo names. Re-run monthly.
@@ -15,7 +17,7 @@ if (!apiKey) {
   process.exit(1);
 }
 
-console.log('→ Running ~90 Nearby Search calls (one-time, strict field mask)…');
+console.log('→ Running 90 Nearby Search calls (hours + up to 5 photo refs are on the same calls, strict field mask)…');
 const { full, publicData, stats } = await runSeed({ apiKey, log: (l) => console.log('  ' + l) });
 console.log(`→ ${stats.raw} raw results → ${stats.kept} restaurants after dedupe + quality filter (${stats.failed} failed calls)`);
 if (publicData.count < 10) {

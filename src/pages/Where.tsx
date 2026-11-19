@@ -8,6 +8,7 @@ import { RADIUS_MAX, RADIUS_MIN } from '../lib/config';
 import { filterBase } from '../lib/data';
 import { fmtCount } from '../lib/format';
 import { formatDistance, getPosition } from '../lib/geo';
+import { useNow } from '../lib/useNow';
 import { useRestaurants } from '../state/data';
 import { useFlow } from '../state/flow';
 
@@ -21,13 +22,16 @@ export default function Where() {
   const nav = useNavigate();
   const { settings, update } = useFlow();
   const { data, error, retry } = useRestaurants();
+  const now = useNow();
   const [geo, setGeo] = useState<'idle' | 'loading' | 'denied' | 'error'>('idle');
 
   useEffect(() => {
     if (!settings.location) update({ location: { lat: DEFAULT_AREA.lat, lng: DEFAULT_AREA.lng, label: DEFAULT_AREA.label, source: 'area', areaId: DEFAULT_AREA.id } });
   }, [settings.location, update]);
 
-  const count = useMemo(() => (data ? filterBase(data.restaurants, settings).length : null), [data, settings]);
+  const openCount = useMemo(() => (data ? filterBase(data.restaurants, settings, { now }).length : null), [data, settings, now]);
+  const anyCount = useMemo(() => (data ? filterBase(data.restaurants, settings, { now, ignoreHours: true }).length : null), [data, settings, now]);
+  const allClosed = openCount === 0 && (anyCount ?? 0) > 0;
 
   async function useGps() {
     setGeo('loading');
@@ -144,13 +148,21 @@ export default function Where() {
             לא הצלחנו לטעון את רשימת המסעדות. בדקו את החיבור לאינטרנט.
             <button className="btn-ghost mx-auto mt-1 !text-tomato-dark underline" onClick={retry}>נסו שוב</button>
           </div>
-        ) : count === 0 ? (
+        ) : allClosed ? (
+          <p role="status" className="mb-3 rounded-2xl bg-mustard/20 p-4 text-center text-sm">
+            🌙 כל המסעדות בטווח סגורות עכשיו. נסו שוב יותר מאוחר, או הגדילו את המרחק.
+            <span className="mt-1 block text-xs">מקום בלי שעות פעילות ידועות כן נשאר ברשימה.</span>
+          </p>
+        ) : openCount === 0 ? (
           <p role="status" className="mb-3 rounded-2xl bg-mustard/20 p-4 text-center text-sm">
             😕 אין מסעדות שמתאימות לחיפוש. נסו להגדיל את המרחק, לבטל את סינון המחיר או לבחור אזור אחר.
           </p>
         ) : null}
-        <button className="btn-primary w-full" disabled={!count} onClick={next}>
-          {count === null && !error ? 'טוענים מסעדות…' : count ? `המשך · ${fmtCount(count)} מסעדות` : 'המשך'}
+        {openCount !== null && anyCount !== null && anyCount > openCount && openCount > 0 && (
+          <p className="mb-3 text-center text-xs text-ink-soft">{fmtCount(openCount)} פתוחות עכשיו מתוך {fmtCount(anyCount)} בטווח · שעון ישראל</p>
+        )}
+        <button className="btn-primary w-full" disabled={!openCount} onClick={next}>
+          {openCount === null && !error ? 'טוענים מסעדות…' : openCount ? `המשך · ${fmtCount(openCount)} מסעדות` : 'המשך'}
         </button>
       </div>
     </Screen>

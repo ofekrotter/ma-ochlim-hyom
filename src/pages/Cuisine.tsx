@@ -6,6 +6,7 @@ import { backend } from '../lib/backend';
 import { CUISINE_ORDER, CUISINES } from '../lib/cuisines';
 import { buildDeck, cuisineCounts, filterBase, filterCuisine } from '../lib/data';
 import { fmtCount } from '../lib/format';
+import { useNow } from '../lib/useNow';
 import type { CuisineKey } from '../lib/types';
 import { useRestaurants } from '../state/data';
 import { useFlow } from '../state/flow';
@@ -16,10 +17,11 @@ export default function Cuisine() {
   const nav = useNavigate();
   const { settings, update } = useFlow();
   const { data } = useRestaurants();
+  const now = useNow();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  const base = useMemo(() => (data ? filterBase(data.restaurants, settings) : []), [data, settings]);
+  const base = useMemo(() => (data ? filterBase(data.restaurants, settings, { now }) : []), [data, settings, now]);
   const counts = useMemo(() => cuisineCounts(base), [base]);
   const available = CUISINE_ORDER.filter((c) => counts.has(c));
   const matching = filterCuisine(base, settings.cuisines).length;
@@ -40,7 +42,7 @@ export default function Cuisine() {
     setBusy(true);
     setErr('');
     try {
-      const session = await backend.createSession(settings, (code) => buildDeck(data.restaurants, settings, `${code}:1`).map((r) => r.id));
+      const session = await backend.createSession(settings, (code) => buildDeck(data.restaurants, settings, `${code}:1`, now).map((r) => r.id));
       markCreator(session.code);
       track('session_created', { cards: session.deck.length });
       nav(`/s/${session.code}`);
@@ -56,7 +58,7 @@ export default function Cuisine() {
     <Screen>
       <TopBar step={3} back="/where" />
       <h1 className="mt-6 text-3xl font-extrabold">מה בא לכם?</h1>
-      <p className="mt-1 text-ink-soft">רק סוגי אוכל שיש באזור שבחרתם</p>
+      <p className="mt-1 text-ink-soft">רק סוגי אוכל של מקומות פתוחים עכשיו באזור שבחרתם</p>
 
       <div className="mt-6 flex flex-wrap gap-2" role="group" aria-label="סוג מטבח">
         <button className={settings.cuisines.length === 0 ? 'chip-on' : 'chip-off'} aria-pressed={settings.cuisines.length === 0} onClick={() => toggle('all')}>

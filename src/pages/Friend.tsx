@@ -5,7 +5,7 @@ import { celebrate } from '../components/confetti';
 import { EmptyState } from '../components/EmptyState';
 import { IconCopy, IconWhatsApp } from '../components/Icons';
 import { Rating, Tags } from '../components/Meta';
-import { Photo } from '../components/Photo';
+import { Photo, TappablePhoto } from '../components/Photo';
 import { Screen, TopBar } from '../components/Screen';
 import { SwipeButtons, SwipeDeck, useSwipeKeys, type Dir, type SwipeDeckHandle } from '../components/SwipeDeck';
 import { track } from '../lib/analytics';
@@ -306,7 +306,7 @@ function MatchOverlay({ r, source, onContinue }: { r: DeckCard; source: Restaura
     <div role="dialog" aria-modal="true" aria-labelledby="match-title" className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/80 p-4 backdrop-blur-sm">
       <div className="w-full max-w-sm overflow-hidden rounded-[2rem] bg-cream shadow-2xl anim-pop">
         <div className="relative">
-          <Photo src={photoUrl(r, source)} cuisine={r.cuisine} alt={r.name} className="aspect-[4/3] w-full" eager />
+          <TappablePhoto restaurant={r} source={source} cuisine={r.cuisine} alt={r.name} className="aspect-[4/3] w-full" eager />
           <div className="absolute inset-x-0 top-4 text-center">
             <span id="match-title" className="inline-block -rotate-3 rounded-2xl bg-tomato px-5 py-2 text-3xl font-extrabold text-white shadow-lg">
               יש מאץ׳! 🎉

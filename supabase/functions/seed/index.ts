@@ -1,6 +1,7 @@
 // POST /functions/v1/seed  { "password": "<ADMIN_PASSWORD>" }
 // One-click (from /stats) rebuild of the restaurant data from Google Places API (New).
-// ~90 Nearby Search calls total. Writes:
+// 90 Nearby Search calls total — opening hours and up to 5 photo refs ride on those
+// same calls (no extra Places requests, no photo-media calls). Writes:
 //   data/restaurants.json       – public file the app downloads (no photo resource names)
 //   data/restaurants.full.json  – server copy with photo names (used by the photo function)
 // and clears cached photos so they are refreshed together with the data.

@@ -7,11 +7,13 @@ export interface SoloRun {
   likes: string[];
   history: { id: string; dir: Dir }[];
   finished: boolean;
+  /** When this round's deck was frozen, so open/closed doesn't reshuffle mid-swipe. */
+  at?: string;
 }
 const KEY = 'mo:solo';
 
 function fresh(): SoloRun {
-  return { seed: Math.random().toString(36).slice(2, 10), index: 0, likes: [], history: [], finished: false };
+  return { seed: Math.random().toString(36).slice(2, 10), index: 0, likes: [], history: [], finished: false, at: new Date().toISOString() };
 }
 export function newSoloRun() {
   try {

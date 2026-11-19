@@ -26,18 +26,20 @@ export function Tags({ r, light = false }: { r: DeckCard | (Restaurant & { dista
   );
 }
 
-export function PhotoCredit({ r, light = false }: { r: Restaurant; light?: boolean }) {
+export function PhotoCredit({ r, light = false, credit }: { r: Restaurant; light?: boolean; credit?: { name: string; uri: string } }) {
+  const name = credit?.name ?? r.photoAuthor ?? '';
+  const uri = credit?.uri ?? r.photoAuthorUri ?? '';
   return (
     <p className={`text-[10px] leading-tight ${light ? 'text-white/70' : 'text-ink-soft'}`}>
-      {r.photoAuthor ? (
+      {name ? (
         <>
           תמונה:{' '}
-          {r.photoAuthorUri ? (
-            <a href={r.photoAuthorUri} target="_blank" rel="noopener noreferrer" className="underline" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
-              {r.photoAuthor}
+          {uri ? (
+            <a href={uri} target="_blank" rel="noopener noreferrer" className="underline" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+              {name}
             </a>
           ) : (
-            r.photoAuthor
+            name
           )}{' '}
           ·{' '}
         </>

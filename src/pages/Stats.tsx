@@ -48,7 +48,7 @@ export default function Stats() {
   }, []);
 
   async function runSeed() {
-    if (!confirm('לרענן את נתוני המסעדות מ-Google? (כ-90 קריאות API, פעם בחודש מספיק)')) return;
+    if (!confirm('לרענן את נתוני המסעדות מ-Google? נשמרות שעות פתיחה ועד 5 תמונות לכל מקום. עדיין כ-90 קריאות Nearby Search (בלי קריאות תמונה בשלב הזה). פעם בחודש מספיק.')) return;
     setSeeding(true);
     setSeed(null);
     try {

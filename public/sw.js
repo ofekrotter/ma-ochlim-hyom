@@ -1,5 +1,5 @@
 // Minimal service worker: makes the app installable and keeps the shell + data available on flaky networks.
-const CACHE = 'mo-v1';
+const CACHE = 'mo-v2';
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/favicon.svg', '/manifest.webmanifest'])).then(() => self.skipWaiting()));
 });
