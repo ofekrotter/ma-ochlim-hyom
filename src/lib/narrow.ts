@@ -8,7 +8,10 @@
 //   (3 → 2, 4 → 3, 5 → 3, 6 → 4). One person cannot block the group, and a tie
 //   is not enough. The room already stops at 6 members (the database rule).
 
-/** Stop swiping once this many places are liked by both sides, and narrow. */
+/**
+ * Enough shared likes to suggest tapping "סיימתי". Only a hint in the UI:
+ * reaching it never ends anyone's swiping on its own.
+ */
 export const MUTUAL_TARGET = 5;
 /** A finished shortlist is never longer than this. */
 export const SHORTLIST_MAX = 3;
@@ -26,20 +29,20 @@ export type FriendPhase =
   | { kind: 'holding'; ids: string[] }
   | { kind: 'empty' }
   | { kind: 'final'; ids: string[] }
-  | { kind: 'narrow'; ids: string[]; reason: 'target' | 'stopped' };
+  | { kind: 'narrow'; ids: string[] };
 
 export interface PhaseInput {
   /** Shared likes in deck order. For a pair that means both liked it. */
   mutualIds: string[];
   /** I tapped "סיימתי" or finished my cards. */
   iStopped: boolean;
-  /** At least one other person is still swiping (online, and has not stopped). */
+  /** At least one other person is still swiping (not away, and has not stopped). */
   friendStillSwiping: boolean;
-  /** Any other member tapped finish or ran out of cards this round. */
-  friendStopped: boolean;
-  /** People in the room. Omitted or 2 keeps the pair stop rule. */
+  /** Any other member tapped finish or ran out of cards this round. Informational. */
+  friendStopped?: boolean;
+  /** People in the room. Informational; the stop rule is the same for any size. */
   memberCount?: number;
-  /** How many members, including me, have stopped. Groups use this. */
+  /** How many members, including me, have stopped. Informational. */
   stoppedCount?: number;
 }
 
@@ -115,54 +118,30 @@ export function candidatePlaceIds(
   return out;
 }
 
-function pairPhase(input: PhaseInput): FriendPhase {
-  const ids = uniqueIds(input.mutualIds);
-  const n = ids.length;
-  const target = n >= MUTUAL_TARGET;
-  const someoneStopped = input.iStopped || input.friendStopped;
-
-  if (!target && !someoneStopped) return { kind: 'swipe' };
-
-  if (n === 0) {
-    if (!input.iStopped) return { kind: 'swipe' };
-    return input.friendStillSwiping ? { kind: 'waiting' } : { kind: 'empty' };
-  }
-
-  if (n <= SHORTLIST_MAX) return { kind: 'final', ids };
-  return { kind: 'narrow', ids, reason: target ? 'target' : 'stopped' };
-}
-
 /**
- * Swipe until there are MUTUAL_TARGET shared likes, or the room's stop rule fires.
- * Pairs: either person stopping is enough. Groups of 3+: a strict majority must
- * have stopped (or nobody is left swiping) so one early "סיימתי" does not end
- * the room. 1–3 shared likes become the shortlist. More than that go to a re-vote.
- * Zero shared likes never yanks someone who is still swiping.
+ * Nobody is ever pulled off their own deck. The room locks (shortlist or
+ * re-vote) only after I stopped AND nobody else is still swiping — every other
+ * member finished their cards, tapped "סיימתי", or has been away long enough
+ * that the caller no longer counts them as swiping.
+ *
+ * - Still swiping myself → swipe. Always, whatever the others did.
+ * - I stopped, someone is still swiping → 'waiting' (nothing shared yet) or
+ *   'holding' (show what we have so far, and let me resume).
+ * - Everyone is done → 0 shared: 'empty'; 1–3: 'final'; more: 'narrow' (re-vote).
  */
 export function friendPhase(input: PhaseInput): FriendPhase {
-  const members = input.memberCount ?? 2;
-  if (members <= 2) return pairPhase(input);
-
   const ids = uniqueIds(input.mutualIds);
   const n = ids.length;
-  const stopped = input.stoppedCount ?? (input.iStopped ? 1 : 0) + (input.friendStopped ? 1 : 0);
-  const majorityStopped = stopped >= likesNeeded(members);
-  const target = n >= MUTUAL_TARGET;
-  const nobodyLeft = input.iStopped && !input.friendStillSwiping;
-  const locked = target || majorityStopped || nobodyLeft;
 
-  if (!locked) {
-    if (!input.iStopped) return { kind: 'swipe' };
-    if (n === 0) return input.friendStillSwiping ? { kind: 'waiting' } : { kind: 'empty' };
-    return { kind: 'holding', ids };
+  if (!input.iStopped) return { kind: 'swipe' };
+
+  if (input.friendStillSwiping) {
+    return n === 0 ? { kind: 'waiting' } : { kind: 'holding', ids };
   }
 
-  if (n === 0) {
-    if (!input.iStopped) return { kind: 'swipe' };
-    return input.friendStillSwiping ? { kind: 'waiting' } : { kind: 'empty' };
-  }
+  if (n === 0) return { kind: 'empty' };
   if (n <= SHORTLIST_MAX) return { kind: 'final', ids };
-  return { kind: 'narrow', ids, reason: target ? 'target' : 'stopped' };
+  return { kind: 'narrow', ids };
 }
 
 /** Keep only real mutuals, in deck order, capped at PICK_CAP. */
@@ -253,7 +232,27 @@ export function resolveVotes(mutualIds: string[], voters: Voter[], selfId: strin
   return { status: 'ready', ids: ranked.slice(0, SHORTLIST_MAX), kind: 'compromise' };
 }
 
-/** Used when the vote rows cannot be saved: first 1–3 mutuals, in deck order. */
-export function fallbackShortlist(mutualIds: string[]): string[] {
-  return uniqueIds(mutualIds).slice(0, SHORTLIST_MAX);
+/**
+ * Used when the vote rows cannot be saved: the 1–3 shared places the most
+ * people liked (and voted for, when any votes did land), deck order breaking ties.
+ */
+export function fallbackShortlist(
+  mutualIds: string[],
+  likeCounts?: ReadonlyMap<string, number>,
+  votes?: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  const mutual = uniqueIds(mutualIds);
+  const order = new Map(mutual.map((id, i) => [id, i]));
+  const voteCount = new Map<string, number>();
+  for (const ballot of votes?.values() ?? []) {
+    for (const id of new Set(ballot)) voteCount.set(id, (voteCount.get(id) ?? 0) + 1);
+  }
+  return [...mutual]
+    .sort(
+      (a, b) =>
+        (voteCount.get(b) ?? 0) - (voteCount.get(a) ?? 0) ||
+        (likeCounts?.get(b) ?? 0) - (likeCounts?.get(a) ?? 0) ||
+        order.get(a)! - order.get(b)!,
+    )
+    .slice(0, SHORTLIST_MAX);
 }

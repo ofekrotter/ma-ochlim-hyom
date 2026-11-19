@@ -216,6 +216,9 @@ export default function Friend() {
           }
         >
           {!fs.friend && <button className="btn-primary" onClick={() => setStarted(false)}>הזמנת חבר</button>}
+          {fs.canSkipOffline && (
+            <button className="btn-secondary" onClick={fs.skipOffline}>{group ? 'ממשיכים בלי מי שלא מחובר' : 'החבר לא מחובר — ממשיכים בלעדיו'}</button>
+          )}
           {!fs.finished && <button className="btn-primary" onClick={fs.resumeSwiping}>ממשיכים להחליק</button>}
           {fs.canUndo && <button className="btn-secondary" onClick={undo}>חזרה לכרטיס האחרון</button>}
         </EmptyState>
@@ -250,8 +253,9 @@ export default function Friend() {
   }
 
   // ── 1–3 places, or a finished re-vote ──
-  if (finalIds) {
-    const chosen = finalIds.map((id) => cards.find((c) => c.id === id)).filter((c): c is DeckCard => Boolean(c));
+  // Only cards we can actually show count, so a stale id can never leave a blank screen.
+  const chosen = (finalIds ?? []).map((id) => cards.find((c) => c.id === id)).filter((c): c is DeckCard => Boolean(c));
+  if (chosen.length > 0) {
     const copy = shortlistCopy(chosen.length, finalKind, group);
     return (
       <Screen>
@@ -286,11 +290,20 @@ export default function Friend() {
       <Screen>
         {header}
         <div className="mt-4 text-center">
-          <h1 className="text-3xl font-extrabold">יש כבר {held.length} מקומות</h1>
-          <p className="mt-1 text-ink-soft">רוב הקבוצה עוד לא סיימה. הרשימה ננעלת כשמספיק אנשים לוחצים סיימתי.</p>
+          <h1 className="text-3xl font-extrabold">{held.length === 1 ? 'יש כבר מקום אחד' : `יש כבר ${held.length} מקומות`}</h1>
+          <p className="mt-1 text-ink-soft">
+            {group
+              ? `${fs.room.finished} מתוך ${fs.room.count} סיימו. מצמצמים כשכולם מסיימים להחליק.`
+              : 'החבר עוד מחליק. מצמצמים כששניכם מסיימים.'}
+          </p>
         </div>
         <MatchList matches={held} source={data.source} />
-        {fs.canResume && <button className="btn-primary mt-4" onClick={fs.resumeSwiping}>ממשיכים להחליק</button>}
+        {fs.canSkipOffline && (
+          <button className="btn-primary mt-4" onClick={fs.skipOffline}>
+            {group ? 'ממשיכים בלי מי שלא מחובר' : 'החבר לא מחובר — ממשיכים בלעדיו'}
+          </button>
+        )}
+        {fs.canResume && <button className="btn-secondary mt-3" onClick={fs.resumeSwiping}>ממשיכים להחליק</button>}
       </Screen>
     );
   }
@@ -303,7 +316,6 @@ export default function Friend() {
         <NarrowVote
           mutuals={cards.filter((c) => fs.phase.kind === 'narrow' && fs.phase.ids.includes(c.id))}
           source={data.source}
-          reason={fs.phase.reason}
           group={group}
           waitingIds={fs.resolution?.status === 'waiting' ? fs.resolution.ids : null}
           pendingFriends={fs.pendingFriends}
@@ -375,7 +387,7 @@ function FriendIndicator({
   offline,
 }: {
   friend: { online: boolean; progress: number; finished: boolean } | null;
-  room: { count: number; finished: number; swiping: number };
+  room: { count: number; finished: number; swiping: number; swipingOnline?: number; swipingOffline?: number };
   total: number;
   offline: boolean;
 }) {
@@ -443,8 +455,8 @@ function shortlistCopy(n: number, kind: ShortlistKind | 'direct' | 'fallback' | 
     return {
       title: `הנה ${n} מקומות`,
       text: group
-        ? 'לא הצלחנו לשמור את הבחירה, אז אלה הראשונים שרוב הקבוצה אהבה.'
-        : 'לא הצלחנו לשמור את הבחירה, אז אלה הראשונים ששניכם אהבתם.',
+        ? 'לא הצלחנו לשמור את הבחירה, אז אלה שקיבלו הכי הרבה תמיכה בקבוצה.'
+        : 'לא הצלחנו לשמור את הבחירה, אז אלה המובילים מבין המקומות ששניכם אהבתם.',
     };
   }
   if (kind === 'agreement') {
@@ -497,7 +509,6 @@ function Shortlist({ matches, source }: { matches: DeckCard[]; source: Restauran
 function NarrowVote({
   mutuals,
   source,
-  reason,
   group,
   waitingIds,
   pendingFriends,
@@ -512,7 +523,6 @@ function NarrowVote({
 }: {
   mutuals: DeckCard[];
   source: RestaurantData['source'];
-  reason: 'target' | 'stopped';
   group: boolean;
   waitingIds: string[] | null;
   pendingFriends: number;
@@ -541,20 +551,23 @@ function NarrowVote({
     }
   }, [draftKey, selected]);
   const waiting = waitingIds !== null;
+  // A saved draft can hold places that are no longer on the list (undo, a new
+  // like, an earlier narrowing). Never let those invisible ids use up the 3 picks.
+  const visible = new Set(mutuals.map((m) => m.id));
+  const picked = selected.filter((id) => visible.has(id)).slice(0, PICK_CAP);
   const toggle = (id: string) => {
     setSelected((prev) => {
-      if (prev.includes(id)) return prev.filter((x) => x !== id);
-      if (prev.length >= PICK_CAP) return prev;
-      return [...prev, id];
+      const cur = prev.filter((x) => visible.has(x));
+      if (cur.includes(id)) return cur.filter((x) => x !== id);
+      if (cur.length >= PICK_CAP) return cur;
+      return [...cur, id];
     });
   };
   return (
     <div className="mt-2 flex flex-1 flex-col">
       <h1 className="text-center text-3xl font-extrabold">בואו נצמצם 🎯</h1>
       <p className="mt-1 text-center text-ink-soft">
-        {reason === 'target'
-          ? `יש ${mutuals.length} מקומות ש${group ? 'רוב הקבוצה אוהבת' : 'שניכם אוהבים'}. כל אחד בוחר עד ${PICK_CAP}.`
-          : `סיימתם להחליק עם ${mutuals.length} מקומות ביחד. כל אחד בוחר עד ${PICK_CAP}.`}
+        {`סיימתם להחליק עם ${mutuals.length} מקומות ש${group ? 'רוב הקבוצה אוהבת' : 'שניכם אוהבים'}. כל אחד בוחר עד ${PICK_CAP}.`}
       </p>
       {waiting ? (
         <div className="mt-6">
@@ -570,8 +583,8 @@ function NarrowVote({
       ) : (
         <ul className="mt-4 flex flex-col gap-3">
           {mutuals.map((m) => {
-            const on = selected.includes(m.id);
-            const full = !on && selected.length >= PICK_CAP;
+            const on = picked.includes(m.id);
+            const full = !on && picked.length >= PICK_CAP;
             return (
               <li key={m.id}>
                 <button
@@ -596,22 +609,22 @@ function NarrowVote({
         </ul>
       )}
       <p className="mt-3 text-center text-sm text-ink-soft" aria-live="polite">
-        {waiting ? 'הבחירה שלכם נשמרה' : `נבחרו ${selected.length} מתוך ${PICK_CAP}`}
+        {waiting ? 'הבחירה שלכם נשמרה' : `נבחרו ${picked.length} מתוך ${PICK_CAP}`}
       </p>
       {friendAway && hasFriend && (
         <p className="mt-1 text-center text-sm text-ink-soft">החבר לא נראה כבר כמה דקות.</p>
       )}
-      {pickError && <p className="mt-2 text-center text-sm text-tomato-dark" role="alert">לא הצלחנו לשמור את הבחירה. נסו שוב, או קחו את המקומות הראשונים.</p>}
+      {pickError && <p className="mt-2 text-center text-sm text-tomato-dark" role="alert">לא הצלחנו לשמור את הבחירה. נסו שוב, או קחו את המקומות המובילים.</p>}
       <div className="mt-auto flex flex-col gap-3 pt-4">
         {!waiting && (
-          <button className="btn-primary" disabled={selected.length === 0 || saving} onClick={() => onSubmit(selected)}>
+          <button className="btn-primary" disabled={picked.length === 0 || saving} onClick={() => onSubmit(picked)}>
             {saving ? 'שומרים…' : 'זו הבחירה שלי'}
           </button>
         )}
         {friendAway && hasFriend && pendingFriends > 0 && (
           <button className="btn-secondary" onClick={onAlone}>נבחר בלעדיו</button>
         )}
-        {pickError && <button className="btn-secondary" onClick={onFallback}>להציג את 3 המקומות הראשונים</button>}
+        {pickError && <button className="btn-secondary" onClick={onFallback}>להציג את 3 המקומות המובילים</button>}
       </div>
     </div>
   );

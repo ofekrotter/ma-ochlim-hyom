@@ -90,6 +90,8 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   const [pickError, setPickError] = useState(false);
   const [savingPicks, setSavingPicks] = useState(false);
   const [fallbackIds, setFallbackIds] = useState<string[] | null>(null);
+  // I explicitly chose not to wait for members who went offline mid-deck.
+  const [skipOffline, setSkipOffline] = useState(false);
   const joined = useRef(false);
   const lastLike = useRef<string | null>(null);
 
@@ -197,6 +199,7 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     setDecideAlone(false);
     setPickError(false);
     setFallbackIds(null);
+    setSkipOffline(false);
   }, [state, me, mine, round, memberId]);
 
   // heartbeat (presence) every 20s
@@ -325,7 +328,14 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   const otherStopped = (m: { round: number; finished: boolean; progress: number }) =>
     deck.length > 0 && m.round === round && (m.finished || m.progress >= deck.length);
   const friendStopped = others.some(otherStopped);
-  const friendStillSwiping = deck.length > 0 && others.some((m) => online(m.last_seen) && !otherStopped(m));
+  // Someone mid-deck keeps the room open. A member who vanished mid-deck stops
+  // counting after VOTE_AWAY_MS of silence, or right away if I chose not to wait.
+  const stillSwipingOthers = deck.length > 0 ? others.filter((m) => !otherStopped(m)) : [];
+  const swipingOnline = stillSwipingOthers.filter((m) => online(m.last_seen)).length;
+  const swipingOffline = stillSwipingOthers.length - swipingOnline;
+  const friendStillSwiping = stillSwipingOthers.some((m) =>
+    skipOffline ? online(m.last_seen) : !memberIsAway(m.last_seen, now),
+  );
   const memberCount = Math.max(1, state?.members.length ?? 1);
   const stoppedCount = (iStopped ? 1 : 0) + others.filter(otherStopped).length;
   const mutualIds = matches.map((m) => m.id);
@@ -400,9 +410,15 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   );
 
   const useFallback = useCallback(() => {
-    const ids = fallbackShortlist(mutualIds);
+    const likeCounts = new Map<string, number>();
+    for (const l of state?.likes ?? []) {
+      if (l.round === round) likeCounts.set(l.place_id, (likeCounts.get(l.place_id) ?? 0) + 1);
+    }
+    const votes = new Map(picksByMember);
+    if (localPicks) votes.set(memberId, localPicks);
+    const ids = fallbackShortlist(mutualIds, likeCounts, votes);
     if (ids.length) setFallbackIds(ids);
-  }, [mutualIds]);
+  }, [mutualIds, state?.likes, round, picksByMember, localPicks, memberId]);
 
   return {
     status,
@@ -428,17 +444,19 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     swipe,
     undo,
     canUndo: Boolean(mine && mine.progress > 0),
-    canResume:
-      !deckDone &&
-      (memberCount > 2
-        ? phase.kind === 'swipe' || phase.kind === 'waiting' || phase.kind === 'holding'
-        : !friendStopped && !(phase.kind === 'narrow' && phase.reason === 'target')),
+    // Anyone with cards left can always go back to their deck.
+    canResume: !deckDone,
     memberCount,
     room: {
       count: memberCount,
       finished: stoppedCount,
-      swiping: (iStopped ? 0 : 1) + others.filter((m) => !otherStopped(m)).length,
+      swiping: (iStopped ? 0 : 1) + stillSwipingOthers.length,
+      swipingOnline,
+      swipingOffline,
     },
+    /** Offer "continue without them" only when the only people left swiping are offline. */
+    canSkipOffline: iStopped && !skipOffline && swipingOffline > 0 && swipingOnline === 0,
+    skipOffline: () => setSkipOffline(true),
     stopSwiping,
     resumeSwiping,
     submitPicks,
