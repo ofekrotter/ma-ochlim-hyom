@@ -6,13 +6,12 @@ import { EmptyState } from '../components/EmptyState';
 import { FinalCard } from '../components/Final';
 import { IconCopy, IconWhatsApp } from '../components/Icons';
 import { Rating, Tags } from '../components/Meta';
-import { Photo, TappablePhoto } from '../components/Photo';
+import { PrimaryPhoto, TappablePhoto } from '../components/Photo';
 import { Screen, TopBar } from '../components/Screen';
 import { SwipeButtons, SwipeDeck, useSwipeKeys, type Dir, type SwipeDeckHandle } from '../components/SwipeDeck';
 import { track } from '../lib/analytics';
 import { isValidCode, normalizeCode } from '../lib/backend';
 import { CUISINES } from '../lib/cuisines';
-import { photoUrl } from '../lib/data';
 import { formatDistance } from '../lib/geo';
 import { PICK_CAP, type ShortlistKind } from '../lib/narrow';
 import type { DeckCard, RestaurantData, Settings } from '../lib/types';
@@ -487,7 +486,7 @@ function MatchList({ matches, source }: { matches: DeckCard[]; source: Restauran
       {matches.map((m) => (
         <li key={m.id} className="card overflow-hidden">
           <div className="flex gap-3 p-3">
-            <Photo src={photoUrl(m, source)} cuisine={m.cuisine} alt={m.name} className="h-24 w-24 shrink-0 rounded-2xl" />
+            <PrimaryPhoto restaurant={m} source={source} cuisine={m.cuisine} alt={m.name} className="h-24 w-24 shrink-0 rounded-2xl" />
             <div className="min-w-0 flex-1">
               <h3 className="truncate text-lg font-bold">{m.name}</h3>
               <div className="text-sm"><Rating r={m} /></div>
@@ -609,7 +608,7 @@ function NarrowVote({
                   onClick={() => toggle(m.id)}
                   className={`card flex w-full items-center gap-3 p-3 text-start ${on ? 'ring-2 ring-tomato' : ''} ${full ? 'opacity-50' : ''}`}
                 >
-                  <Photo src={photoUrl(m, source)} cuisine={m.cuisine} alt="" className="h-16 w-16 shrink-0 rounded-2xl" />
+                  <PrimaryPhoto restaurant={m} source={source} cuisine={m.cuisine} alt="" className="h-16 w-16 shrink-0 rounded-2xl" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-lg font-bold">{m.name}</span>
                     <span className="mt-0.5 block text-sm"><Rating r={m} /></span>

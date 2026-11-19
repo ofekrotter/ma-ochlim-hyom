@@ -3,7 +3,8 @@
 // A cached file younger than 30 days is a redirect, with no rate limit: serving
 // the cache costs nothing on Google's side. Older files are deleted (Google's
 // 30-day caching limit for Places content).
-// Google is called only for photo index 0, only for a photo name that is already
+// Google is called only for ONE photo per place (index 1 when the place has 2+
+// photos, else 0 — see googlePhotoIndexFor), only for a photo name that is already
 // in our seeded file, and only while the monthly cap (and short in-isolate burst
 // caps) still has room. Extra carousel photos are served only if already cached.
 // The API key never leaves this function.
@@ -14,6 +15,7 @@ import {
   PHOTO_FETCH_MONTHLY_CAP,
   PHOTO_MAX_WIDTH_PX,
   cacheIsFresh,
+  GOOGLE_PHOTO_INDEXES,
   googleMayFetchPhoto,
   isPlacesPhotoName,
   placesBillingMonth,
@@ -77,17 +79,22 @@ Deno.serve(async (req) => {
     }
     if (head.ok) await bucket.remove([path]);
 
-    // Extra carousel photos are never bought from Google. The app drops this slide.
-    if (!googleMayFetchPhoto(index)) return notFound('not cached', 6 * 3600);
+    // Photos 2–4 are never bought from Google. The app drops this slide.
+    if (!GOOGLE_PHOTO_INDEXES.includes(index)) return notFound('not cached', 6 * 3600);
 
-    // Everything below can reach Google, so it is rate limited.
+    // The manifest is cached in this isolate for a minute, so this is at most one storage read per minute.
+    const manifest = await loadManifest(sb);
+    const names = manifest?.map.get(id);
+    if (!manifest?.fresh || !names || names.length === 0) return notFound('unknown place', 3600);
+    // Only the chosen photo of this place may be fetched; the other of 0/1 is served only from cache.
+    if (!googleMayFetchPhoto(index, names.length)) return notFound('not cached', 6 * 3600);
+    const name = names[index];
+    if (!name || !isPlacesPhotoName(name)) return notFound('unknown place', 3600);
+
+    // Everything below calls Google, so it is rate limited.
     const burst = slidingWindowAllow(requestStamps, Date.now(), 60_000, 60);
     requestStamps = burst.stamps;
     if (!burst.ok) return busy();
-
-    const manifest = await loadManifest(sb);
-    const name = manifest?.map.get(id)?.[index];
-    if (!manifest?.fresh || !name || !isPlacesPhotoName(name)) return notFound('unknown place', 3600);
 
     const key = Deno.env.get('GOOGLE_PLACES_API_KEY');
     if (!key) return notFound('photo unavailable');

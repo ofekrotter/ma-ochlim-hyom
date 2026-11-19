@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CUISINES } from '../lib/cuisines';
 import { photoUrl } from '../lib/data';
-import { photoCountOf } from '../lib/photos';
+import { photoCountOf, primaryPhotoIndex } from '../lib/photos';
 import { isPhotoFailed, markPhotoFailed, PHOTO_RETRY_MS, photoSlides, retryUrl, usePhotoFailures } from '../lib/photoFailures';
 import type { CuisineKey, Restaurant, RestaurantData } from '../lib/types';
 
@@ -84,7 +84,7 @@ export function PhotoBars({ count, index }: { count: number; index: number }) {
  */
 export function useCardSlides(restaurant: Pick<Restaurant, 'id' | 'hasPhoto' | 'photoCount' | 'demoPhotos'>, source: RestaurantData['source']): number[] {
   usePhotoFailures();
-  return photoSlides(photoCountOf(restaurant), (i) => photoUrl(restaurant, source, i));
+  return photoSlides(photoCountOf(restaurant), (i) => photoUrl(restaurant, source, i), undefined, primaryPhotoIndex(restaurant));
 }
 
 export function usePhotoIndex(count: number) {
@@ -133,7 +133,7 @@ export function TappablePhoto({
   const label = count > 1 ? `${alt}, תמונה ${slot + 1} מתוך ${count}` : alt;
   return (
     <div className={`relative overflow-hidden ${className}`}>
-      <Photo src={src} cuisine={cuisine} alt={label} className="absolute inset-0" eager={eager || index === 0} />
+      <Photo src={src} cuisine={cuisine} alt={label} className="absolute inset-0" eager={eager || slot === 0} />
       <PhotoBars count={count} index={slot} />
       {count > 1 && (
         <div className="absolute inset-0 z-10 flex" dir="ltr">
@@ -143,4 +143,22 @@ export function TappablePhoto({
       )}
     </div>
   );
+}
+
+/** A small, non-paging photo (lists, thumbnails): the card's first available slide. */
+export function PrimaryPhoto({
+  restaurant,
+  source,
+  cuisine,
+  alt,
+  className = '',
+}: {
+  restaurant: Pick<Restaurant, 'id' | 'hasPhoto' | 'photoCount' | 'demoPhotos'>;
+  source: RestaurantData['source'];
+  cuisine: CuisineKey;
+  alt: string;
+  className?: string;
+}) {
+  const slides = useCardSlides(restaurant, source);
+  return <Photo src={photoUrl(restaurant, source, slides[0] ?? 0)} cuisine={cuisine} alt={alt} className={className} />;
 }

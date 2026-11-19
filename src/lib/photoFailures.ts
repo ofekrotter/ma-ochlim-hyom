@@ -38,20 +38,26 @@ export function usePhotoFailures(): number {
 }
 
 /**
- * Carousel slides for a card: photo 0 always stays (it falls back to the cuisine
- * illustration), extra photos stay only while they have not failed.
+ * Carousel slides for a card, in display order: the primary photo first (the food
+ * photo, see primaryPhotoIndex), then photo 0, then the rest. A slide that failed
+ * (not cached, or the monthly budget is spent) drops out, so a failed primary falls
+ * back to a cached photo 0. If every slide failed, the primary stays and shows the
+ * cuisine illustration.
  */
-export function photoSlides(count: number, urlFor: (index: number) => string | null, isFailed: (url: string) => boolean = isPhotoFailed): number[] {
-  const out: number[] = [];
-  for (let i = 0; i < count; i++) {
-    if (i === 0) {
-      out.push(0);
-      continue;
-    }
+export function photoSlides(
+  count: number,
+  urlFor: (index: number) => string | null,
+  isFailed: (url: string) => boolean = isPhotoFailed,
+  primary = 0,
+): number[] {
+  if (count <= 0) return [];
+  const first = primary >= 0 && primary < count ? primary : 0;
+  const order = [first, ...Array.from({ length: count }, (_, i) => i).filter((i) => i !== first)];
+  const out = order.filter((i) => {
     const url = urlFor(i);
-    if (url && !isFailed(url)) out.push(i);
-  }
-  return out;
+    return Boolean(url) && !isFailed(url as string);
+  });
+  return out.length > 0 ? out : [first];
 }
 
 /** Same URL with a marker so a retry is not answered from the browser's cache of the failure. */

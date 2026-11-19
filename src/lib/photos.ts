@@ -26,3 +26,15 @@ export function photoQuery(id: string, index = 0): string {
   const base = `id=${encodeURIComponent(id)}`;
   return index <= 0 ? base : `${base}&i=${index}`;
 }
+
+/**
+ * The photo a card opens on. Google's photo 0 is the Maps cover, usually the
+ * storefront or the room; photo 1 is usually a dish. So places with 2+ Google
+ * photos open on photo 1, and that is the only photo the photo function buys from
+ * Google. Demo data keeps its own order.
+ * Keep in sync with googlePhotoIndexFor in supabase/functions/_shared/guard.js.
+ */
+export function primaryPhotoIndex(r: PhotoSource): number {
+  if (r.demoPhotos && r.demoPhotos.length > 0) return 0;
+  return photoCountOf(r) >= 2 ? 1 : 0;
+}
