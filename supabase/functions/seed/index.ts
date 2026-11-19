@@ -1,13 +1,11 @@
 // POST /functions/v1/seed  { "password": "<ADMIN_PASSWORD>" }
-// One-click (from /stats) rebuild of the restaurant data from Google Places API (New).
-// 90 Nearby Search calls total — opening hours and up to 5 photo refs ride on those
-// same calls (no extra Places requests, no photo-media calls). Writes:
-//   data/restaurants.json       – public file the app downloads (no photo resource names)
-//   data/restaurants.full.json  – server copy with photo names (used by the photo function)
-// and clears cached photos so they are refreshed together with the data.
+// Rebuilds restaurant data from Google Places API (New). About 90 Nearby Search
+// calls. Writes the public list and a private photo manifest, then clears cached
+// photos. At most SEED_DAILY_CAP successful runs per UTC day.
 import { runSeed } from '../_shared/seedCore.js';
 import { adminClient } from '../_shared/admin.ts';
 import { checkPassword, corsHeaders, json } from '../_shared/http.ts';
+import { SEED_DAILY_CAP, redactSecrets, utcDay } from '../_shared/guard.js';
 
 async function clearPhotos(sb: ReturnType<typeof adminClient>) {
   for (let i = 0; i < 20; i++) {
@@ -20,28 +18,39 @@ async function clearPhotos(sb: ReturnType<typeof adminClient>) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
-  if (!(await checkPassword(req))) return json({ error: 'סיסמה שגויה' }, 401);
+  const auth = await checkPassword(req);
+  if (!auth.ok) {
+    return json({ error: auth.error }, auth.status, auth.retryAfter ? { 'Retry-After': String(auth.retryAfter) } : {});
+  }
 
   const apiKey = Deno.env.get('GOOGLE_PLACES_API_KEY');
   if (!apiKey) return json({ error: 'GOOGLE_PLACES_API_KEY לא מוגדר ב-Secrets' }, 400);
 
+  const sb = adminClient();
+  const slot = await sb.rpc('consume_daily_slot', { p_bucket: `seed:${utcDay()}`, p_limit: SEED_DAILY_CAP });
+  if (slot.error) return json({ error: 'צריך להחיל את מיגרציית האבטחה לפני רענון' }, 503);
+  if (slot.data !== true) return json({ error: 'כבר רעננו את הנתונים כמה פעמים היום. מחר אפשר שוב — ככה לא חורגים מהמכסה החינמית של Google.' }, 429);
+
   const logs: string[] = [];
+  const clean = (line: string) => redactSecrets(line, apiKey);
   try {
-    const { full, publicData, stats } = await runSeed({ apiKey, log: (l: string) => logs.push(l) });
-    if (publicData.count < 10) return json({ error: 'התקבלו מעט מדי מסעדות — הנתונים הקודמים נשמרו', stats, logs }, 500);
-    const sb = adminClient();
-    const up = (path: string, data: unknown, cache: string) =>
-      sb.storage.from('data').upload(path, new Blob([JSON.stringify(data)], { type: 'application/json' }), {
+    const { full, publicData, stats } = await runSeed({ apiKey, log: (l: string) => logs.push(clean(l)) });
+    if (publicData.count < 10) {
+      return json({ error: 'התקבלו מעט מדי מסעדות — הנתונים הקודמים נשמרו', stats, logs }, 500);
+    }
+    const up = (bucket: string, path: string, data: unknown, cache: string) =>
+      sb.storage.from(bucket).upload(path, new Blob([JSON.stringify(data)], { type: 'application/json' }), {
         upsert: true,
         contentType: 'application/json',
         cacheControl: cache,
       });
-    const a = await up('restaurants.full.json', full, '60');
-    const b = await up('restaurants.json', publicData, '300');
-    if (a.error || b.error) throw new Error((a.error ?? b.error)!.message);
+    const a = await up('data-private', 'restaurants.full.json', full, '60');
+    const b = await up('data', 'restaurants.json', publicData, '300');
+    if (a.error || b.error) throw new Error(clean((a.error ?? b.error)!.message));
+    await sb.storage.from('data').remove(['restaurants.full.json']);
     await clearPhotos(sb);
     return json({ ok: true, stats, logs });
   } catch (e) {
-    return json({ error: (e as Error).message, logs }, 500);
+    return json({ error: clean((e as Error).message), logs }, 500);
   }
 });

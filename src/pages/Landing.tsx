@@ -5,7 +5,7 @@ import { useFlow } from '../state/flow';
 
 const FEATURES = [
   { emoji: '🎯', title: 'סינון חכם', text: 'מרחק, מחיר, סוג אוכל — ורק מה שפתוח' },
-  { emoji: '👆', title: 'החלקה כמו בטינדר', text: 'ימינה אהבתי, שמאלה דלג' },
+  { emoji: '👆', title: 'החלקה ימינה ושמאלה', text: 'ימינה אהבתי, שמאלה דלג' },
   { emoji: '💘', title: 'עם חברים', text: 'קבוצה של עד 6, ואז 1–3 מקומות' },
 ];
 
@@ -62,9 +62,10 @@ export default function Landing() {
       </ul>
 
       <footer className="mt-4 text-center text-xs text-ink-soft">
-        <Link to="/privacy" className="underline-offset-2 hover:underline">פרטיות</Link>
+        <Link to="/privacy" className="underline underline-offset-2">פרטיות ותנאים</Link>
         <span className="mx-2">·</span>
         <span>נתוני מסעדות: <span translate="no">Google Maps</span></span>
+        <span className="mt-1 block text-[10px] leading-snug">לא קשורים ל-Google, ל-Wolt או ל-Waze. המידע על המסעדות עשוי להיות לא מדויק.</span>
       </footer>
     </Screen>
   );

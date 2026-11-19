@@ -38,6 +38,8 @@ export interface RestaurantData {
   source: 'google_places' | 'sample';
   count: number;
   restaurants: Restaurant[];
+  /** Set when Google data was too old to show and the demo list is standing in. */
+  notice?: 'stale';
 }
 
 export type Mode = 'solo' | 'friend';

@@ -28,6 +28,9 @@ export function NavButtons({ r, context }: { r: Restaurant; context: string }) {
           <IconBag size={20} /> הזמינו ב-Wolt
         </a>
       )}
+      <p className="col-span-2 text-center text-[10px] leading-snug text-ink-soft">
+        קישורים אל Google Maps, Waze ו-Wolt. האפליקציה לא קשורה אליהם ולא מאושרת על ידם.
+      </p>
     </div>
   );
 }

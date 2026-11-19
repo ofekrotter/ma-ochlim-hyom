@@ -1,5 +1,9 @@
 node_modules/
+dist/
+*.tsbuildinfo
 .env
+.env.*
+!.env.example
 scripts/.wolt-cache.json
 vite.config.js.timestamp-*.mjs
 vite.config.mjs.timestamp-*.mjs

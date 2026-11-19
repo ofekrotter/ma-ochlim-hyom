@@ -1,8 +1,28 @@
 import { CUISINES } from '../lib/cuisines';
 import { fmtCount, fmtRating, priceLabel } from '../lib/format';
 import { formatDistance } from '../lib/geo';
+import { safeHttpsUrl } from '../lib/publicSafety';
 import type { DeckCard, Restaurant } from '../lib/types';
 import { IconStar } from './Icons';
+
+/** Colored wordmark required when Places content is on screen. Text, not a copied logo file. */
+function GoogleWordmark() {
+  const letters: [string, string][] = [
+    ['G', '#4285F4'],
+    ['o', '#EA4335'],
+    ['o', '#FBBC05'],
+    ['g', '#4285F4'],
+    ['l', '#34A853'],
+    ['e', '#EA4335'],
+  ];
+  return (
+    <span translate="no" className="inline-flex font-semibold tracking-tight" aria-label="Google">
+      {letters.map(([letter, color], i) => (
+        <span key={i} style={{ color }}>{letter}</span>
+      ))}
+    </span>
+  );
+}
 
 export function Rating({ r, light = false }: { r: Pick<Restaurant, 'rating' | 'ratings'>; light?: boolean }) {
   return (
@@ -27,8 +47,8 @@ export function Tags({ r, light = false }: { r: DeckCard | (Restaurant & { dista
 }
 
 export function PhotoCredit({ r, light = false, credit }: { r: Restaurant; light?: boolean; credit?: { name: string; uri: string } }) {
-  const name = credit?.name ?? r.photoAuthor ?? '';
-  const uri = credit?.uri ?? r.photoAuthorUri ?? '';
+  const name = (credit?.name ?? r.photoAuthor ?? '').slice(0, 120);
+  const uri = safeHttpsUrl(credit?.uri ?? r.photoAuthorUri ?? '');
   return (
     <p className={`text-[10px] leading-tight ${light ? 'text-white/70' : 'text-ink-soft'}`}>
       {name ? (
@@ -44,7 +64,7 @@ export function PhotoCredit({ r, light = false, credit }: { r: Restaurant; light
           ·{' '}
         </>
       ) : null}
-      <span translate="no">Google Maps</span>
+      <GoogleWordmark /> <span translate="no">Maps</span>
     </p>
   );
 }

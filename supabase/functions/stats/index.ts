@@ -6,7 +6,10 @@ import { checkPassword, corsHeaders, json } from '../_shared/http.ts';
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
-  if (!(await checkPassword(req))) return json({ error: 'סיסמה שגויה' }, 401);
+  const auth = await checkPassword(req);
+  if (!auth.ok) {
+    return json({ error: auth.error }, auth.status, auth.retryAfter ? { 'Retry-After': String(auth.retryAfter) } : {});
+  }
 
   const sb = adminClient();
   const { data, error } = await sb.from('event_counts').select('day, event, count').order('day', { ascending: false }).limit(5000);
