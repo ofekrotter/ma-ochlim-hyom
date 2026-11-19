@@ -22,6 +22,11 @@ export function safeEqual(a: string, b: string) {
 }
 
 export async function checkPassword(req: Request): Promise<boolean> {
+  // Service-role bearer token is already the highest-privilege credential — accept it directly.
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  const auth = req.headers.get('authorization') ?? '';
+  if (serviceKey && auth === `Bearer ${serviceKey}`) return true;
+
   const expected = Deno.env.get('ADMIN_PASSWORD') ?? '';
   if (!expected) return false;
   try {

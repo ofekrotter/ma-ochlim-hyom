@@ -3,15 +3,19 @@
   "functions": {
     "photo": {
       "hasChanged": false,
-      "hash": "d9d214a5b120ee6994d76ca882fbb35eec343e91c885d66714e786a3f26671ef9ee2de6221abaa11f3e6306e3d62684bc7b13c6ea114b312dfc639b01e4c3833"
+      "hash": "d9d214a5b120ee6994d76ca882fbb35eec343e91c885d66714e786a3f26671ef3c0f0225f43eae20f9b46196a27bfe3c01788c421e1d94d6eca4f1128b1d063f"
     },
     "seed": {
       "hasChanged": false,
-      "hash": "1d60825a4b3c8c61df95942c909f14615d5c7841bee9bbdb7b0123e520f1aff79ee2de6221abaa11f3e6306e3d62684bc7b13c6ea114b312dfc639b01e4c3833"
+      "hash": "1d60825a4b3c8c61df95942c909f14615d5c7841bee9bbdb7b0123e520f1aff73c0f0225f43eae20f9b46196a27bfe3c01788c421e1d94d6eca4f1128b1d063f"
     },
     "stats": {
       "hasChanged": false,
-      "hash": "b80037532688c8f3796aaa726dc6e8d36a655f0d22787ec612e549f3d337fed49ee2de6221abaa11f3e6306e3d62684bc7b13c6ea114b312dfc639b01e4c3833"
+      "hash": "b80037532688c8f3796aaa726dc6e8d36a655f0d22787ec612e549f3d337fed43c0f0225f43eae20f9b46196a27bfe3c01788c421e1d94d6eca4f1128b1d063f"
+    },
+    "seed-trigger": {
+      "hasChanged": false,
+      "hash": "66eaddd9f2331c7352b806eb265bc40d131e7bfc58984c085ff2361e47e836d73c0f0225f43eae20f9b46196a27bfe3c01788c421e1d94d6eca4f1128b1d063f"
     }
   }
 }
