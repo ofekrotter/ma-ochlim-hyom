@@ -129,6 +129,18 @@ export default function Friend() {
   }
   if (!fs.ready || !data || !fs.session) return <Loading text="מתחברים לחדר…" />;
 
+  if (fs.deckMissing) {
+    return (
+      <Screen>
+        <TopBar back="/" />
+        <EmptyState emoji="🔄" title="לא הצלחנו לטעון את המסעדות של החדר" text="כנראה שרשימת המסעדות התעדכנה או לא נטענה עד הסוף. טעינה מחדש בדרך כלל פותרת את זה.">
+          <button className="btn-primary" onClick={() => window.location.reload()}>טעינה מחדש</button>
+          <button className="btn-secondary" onClick={() => nav('/start')}>פותחים חדר חדש</button>
+        </EmptyState>
+      </Screen>
+    );
+  }
+
   const url = `${window.location.origin}/s/${code}`;
   const total = fs.deck.length;
 
@@ -197,7 +209,7 @@ export default function Friend() {
     if (!ok) fs.refresh();
   };
   const cards = fs.matches;
-  const group = fs.memberCount >= 3;
+  const group = fs.activeCount >= 3;
 
   // ── Nothing in common yet ──
   if (fs.phase.kind === 'waiting') {
@@ -320,6 +332,7 @@ export default function Friend() {
           waitingIds={fs.resolution?.status === 'waiting' ? fs.resolution.ids : null}
           pendingFriends={fs.pendingFriends}
           friendAway={fs.friendAway}
+          canDecideWithout={fs.canDecideWithout}
           hasFriend={Boolean(fs.friend)}
           draftKey={`mo:pick-draft:${code}:${fs.session.round}`}
           saving={fs.savingPicks}
@@ -513,6 +526,7 @@ function NarrowVote({
   waitingIds,
   pendingFriends,
   friendAway,
+  canDecideWithout,
   hasFriend,
   draftKey,
   saving,
@@ -527,6 +541,7 @@ function NarrowVote({
   waitingIds: string[] | null;
   pendingFriends: number;
   friendAway: boolean;
+  canDecideWithout: boolean;
   hasFriend: boolean;
   draftKey: string;
   saving: boolean;
@@ -621,8 +636,8 @@ function NarrowVote({
             {saving ? 'שומרים…' : 'זו הבחירה שלי'}
           </button>
         )}
-        {friendAway && hasFriend && pendingFriends > 0 && (
-          <button className="btn-secondary" onClick={onAlone}>נבחר בלעדיו</button>
+        {canDecideWithout && pendingFriends > 0 && (
+          <button className="btn-secondary" onClick={onAlone}>{group ? 'ממשיכים בלי מי שלא מחובר' : 'נבחר בלעדיו'}</button>
         )}
         {pickError && <button className="btn-secondary" onClick={onFallback}>להציג את 3 המקומות המובילים</button>}
       </div>

@@ -4,6 +4,7 @@ import { Screen, TopBar } from '../components/Screen';
 import { track } from '../lib/analytics';
 import { backend } from '../lib/backend';
 import { CUISINE_ORDER, CUISINES } from '../lib/cuisines';
+import { roomSettings } from '../lib/geo';
 import { buildDeck, cuisineCounts, filterBase, filterCuisine } from '../lib/data';
 import { fmtCount } from '../lib/format';
 import { useNow } from '../lib/useNow';
@@ -42,7 +43,9 @@ export default function Cuisine() {
     setBusy(true);
     setErr('');
     try {
-      const session = await backend.createSession(settings, (code) => buildDeck(data.restaurants, settings, `${code}:1`, now).map((r) => r.id));
+      // The room stores a rounded GPS point; the deck is built from that same point so everyone sees the same distances.
+      const stored = roomSettings(settings);
+      const session = await backend.createSession(stored, (code) => buildDeck(data.restaurants, stored, `${code}:1`, now).map((r) => r.id));
       markCreator(session.code);
       track('session_created', { cards: session.deck.length });
       nav(`/s/${session.code}`);

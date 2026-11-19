@@ -24,3 +24,18 @@ export function getPosition(): Promise<GeoResult> {
     );
   });
 }
+
+/** ~100 m. Enough to pick restaurants; not someone's exact door. */
+export function roundCoord(n: number, decimals = 3): number {
+  const f = 10 ** decimals;
+  return Math.round(n * f) / f;
+}
+
+/**
+ * Settings as stored in a friend room. Anyone with the room link can read them for
+ * 24 hours, so a "near me" GPS point is rounded to 3 decimals first.
+ */
+export function roomSettings<T extends { location: { lat: number; lng: number; source: string } | null }>(s: T): T {
+  if (!s.location || s.location.source !== 'gps') return s;
+  return { ...s, location: { ...s.location, lat: roundCoord(s.location.lat), lng: roundCoord(s.location.lng) } };
+}

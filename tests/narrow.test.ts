@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activeMemberIds,
+  canDecideWithout,
+  syncPlan,
   MUTUAL_TARGET,
   PICK_CAP,
   SHORTLIST_MAX,
@@ -287,5 +290,116 @@ describe('narrowing votes reach the database', () => {
     expect(sql).toMatch(/security definer/);
     expect(sql).toMatch(/private\.assert_member\(p_code, p_member_id, p_token\)/);
     expect(sql).toMatch(/p_round between 100 and 999 and p_round % 100 = v_round/);
+  });
+});
+
+
+describe('pre-launch: who counts in a room', () => {
+  const now = Date.parse('2026-11-19T18:00:00Z');
+  const ago = (s: number) => new Date(now - s * 1000).toISOString();
+  const m = (id: string, over: Partial<{ round: number; progress: number; finished: boolean; last_seen: string }> = {}) => ({
+    member_id: id,
+    round: 1,
+    progress: 0,
+    finished: false,
+    last_seen: ago(5),
+    ...over,
+  });
+
+  it('a member who opened the link and left without swiping does not count toward the majority', () => {
+    const members = [m('me'), m('a', { progress: 12 }), m('b', { progress: 40, finished: true }), m('ghost', { last_seen: ago(600) })];
+    const ids = activeMemberIds(members, 'me', 1, now, 60_000);
+    expect(ids.sort()).toEqual(['a', 'b', 'me']);
+    // 3 people taking part → 2 likes needed, not 3 of 4.
+    expect(likesNeeded(ids.length)).toBe(2);
+  });
+
+  it('keeps someone who swiped this round even while offline, and anyone online', () => {
+    const members = [m('a', { progress: 3, last_seen: ago(900) }), m('lobby'), m('old', { round: 1, progress: 0, last_seen: ago(120) })];
+    expect(activeMemberIds(members, 'me', 1, now, 60_000).sort()).toEqual(['a', 'lobby', 'me']);
+    // Progress from an earlier round does not count in a new round.
+    expect(activeMemberIds([m('a', { round: 1, progress: 9, last_seen: ago(900) })], 'me', 2, now, 60_000)).toEqual(['me']);
+  });
+
+  it('majority over active members finds the place two of three real people liked', () => {
+    const members = [m('me', { progress: 5 }), m('a', { progress: 5 }), m('b', { progress: 5 }), m('ghost', { last_seen: ago(600) })];
+    const ids = activeMemberIds(members, 'me', 1, now, 60_000);
+    const likes = new Map([
+      ['me', new Set(['x'])],
+      ['a', new Set(['x'])],
+      ['b', new Set<string>()],
+    ]);
+    expect(candidatePlaceIds(['x', 'y'], likes, ids)).toEqual(['x']);
+    // Counting the ghost would have needed 3 of 4.
+    expect(candidatePlaceIds(['x', 'y'], likes, [...ids, 'ghost'])).toEqual([]);
+  });
+});
+
+describe('pre-launch: re-vote never freezes on someone who left', () => {
+  it('offers to continue when any voter we wait on is offline and has not voted', () => {
+    expect(canDecideWithout([{ online: true, picks: ['x'] }, { online: false, picks: null }])).toBe(true);
+    expect(canDecideWithout([{ online: true, picks: null }, { online: false, picks: ['x'] }])).toBe(false);
+    expect(canDecideWithout([])).toBe(false);
+  });
+
+  it('group of 3: B online and voted, C offline and silent → I can finish without C', () => {
+    const voters = votersForDecision({
+      selfId: 'me',
+      selfPicks: ['x'],
+      others: [
+        { memberId: 'b', online: true, picks: ['x'] },
+        { memberId: 'c', online: false, picks: null },
+      ],
+      decideAlone: false,
+    });
+    expect(resolveVotes(['x', 'y', 'z', 'w'], voters, 'me').status).toBe('waiting');
+    const offlineSilent = voters
+      .filter((v) => v.required && v.memberId !== 'me')
+      .map((v) => ({ online: v.memberId === 'b', picks: v.picks }));
+    expect(canDecideWithout(offlineSilent)).toBe(true);
+    const after = votersForDecision({
+      selfId: 'me',
+      selfPicks: ['x'],
+      others: [
+        { memberId: 'b', online: true, picks: ['x'] },
+        { memberId: 'c', online: false, picks: null },
+      ],
+      decideAlone: true,
+    });
+    expect(resolveVotes(['x', 'y', 'z', 'w'], after, 'me')).toEqual({ status: 'ready', ids: ['x'], kind: 'agreement' });
+  });
+});
+
+describe('pre-launch: re-sync after a lost write', () => {
+  it('re-sends likes the server lost and a lost "finished"', () => {
+    const plan = syncPlan({
+      memberId: 'me',
+      round: 2,
+      myLikes: new Set(['a', 'b', 'c']),
+      progress: 40,
+      finished: true,
+      likes: [
+        { member_id: 'me', round: 2, place_id: 'a' },
+        { member_id: 'me', round: 1, place_id: 'b' },
+        { member_id: 'me', round: 102, place_id: 'c' },
+        { member_id: 'friend', round: 2, place_id: 'c' },
+      ],
+      members: [{ member_id: 'me', round: 2, progress: 39, finished: false }],
+    });
+    expect(plan.missingLikes).toEqual(['b', 'c']);
+    expect(plan.progressDiffers).toBe(true);
+  });
+
+  it('does nothing when the server already matches', () => {
+    const plan = syncPlan({
+      memberId: 'me',
+      round: 1,
+      myLikes: ['a'],
+      progress: 3,
+      finished: false,
+      likes: [{ member_id: 'me', round: 1, place_id: 'a' }],
+      members: [{ member_id: 'me', round: 1, progress: 3, finished: false }],
+    });
+    expect(plan).toEqual({ missingLikes: [], progressDiffers: false });
   });
 });

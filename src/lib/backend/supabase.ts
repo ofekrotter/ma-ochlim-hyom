@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '../config';
+import { roomSettings } from '../geo';
 import type { Settings } from '../types';
 import { randomCode, SessionError, type Backend, type SeedResult, type SessionRow, type StatsResult } from './types';
 
@@ -64,7 +65,7 @@ export function createSupabaseBackend(): Backend {
       for (let attempt = 0; attempt < 6; attempt++) {
         const code = randomCode();
         const deck = deckFor(code);
-        const { data, error } = await sb.rpc('create_friend_session', { p_code: code, p_settings: settings, p_deck: deck });
+        const { data, error } = await sb.rpc('create_friend_session', { p_code: code, p_settings: roomSettings(settings), p_deck: deck });
         if (!error && data) return data as SessionRow;
         if (error?.code === '23505' || (error?.message || '').includes('duplicate')) continue;
         throw fail(error);
