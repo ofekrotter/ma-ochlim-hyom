@@ -1,12 +1,12 @@
 import { animate, motion, useMotionValue, useReducedMotion, useTransform } from 'motion/react';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { photoUrl } from '../lib/data';
-import { photoCreditOf } from '../lib/photos';
+import { photoCountOf, photoCreditOf, primaryPhotoIndex } from '../lib/photos';
 import type { DeckCard, RestaurantData } from '../lib/types';
 import { IconHeart, IconUndo, IconX } from './Icons';
 import { PhotoCredit, Rating, Tags } from './Meta';
 import { Photo, PhotoBars, useCardSlides } from './Photo';
-import { markPhotoFailed } from '../lib/photoFailures';
+import { markPhotoFailed, photoSlides } from '../lib/photoFailures';
 
 export type Dir = 'left' | 'right';
 export interface SwipeDeckHandle {
@@ -32,7 +32,9 @@ export const SwipeDeck = forwardRef<SwipeDeckHandle, Props>(function SwipeDeck({
   // Preload the next photos so the next card is instant.
   useEffect(() => {
     for (const c of cards.slice(index + 1, index + 4)) {
-      const src = photoUrl(c, source, 0);
+      // The photo the card will open on (food photo first, or its cached fallback).
+      const first = photoSlides(photoCountOf(c), (i) => photoUrl(c, source, i), undefined, primaryPhotoIndex(c))[0];
+      const src = first === undefined ? null : photoUrl(c, source, first);
       if (src) {
         const img = new Image();
         img.decoding = 'async';

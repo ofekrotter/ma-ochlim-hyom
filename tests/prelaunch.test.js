@@ -19,9 +19,12 @@ const viteConfig = readFileSync(new URL('../vite.config.ts', import.meta.url), '
 test('Google photo downloads stay under the 1,000/month free usage', () => {
   assert.ok(PHOTO_FETCH_MONTHLY_CAP <= 950, 'leave headroom under 1,000');
   assert.ok(PHOTO_FETCH_MONTHLY_CAP >= 661, 'every place can still get its first photo');
-  assert.deepEqual(GOOGLE_PHOTO_INDEXES, [0]);
-  assert.equal(googleMayFetchPhoto(0), true);
-  for (const i of [1, 2, 3, 4]) assert.equal(googleMayFetchPhoto(i), false);
+  assert.deepEqual(GOOGLE_PHOTO_INDEXES, [0, 1]);
+  // Exactly one photo per place can be bought from Google.
+  for (const count of [1, 2, 5]) {
+    const allowed = [0, 1, 2, 3, 4].filter((i) => googleMayFetchPhoto(i, count));
+    assert.equal(allowed.length, 1, `count ${count}`);
+  }
   assert.equal(PHOTO_MAX_WIDTH_PX, 480);
   assert.match(photoFn, /photo:\$\{placesBillingMonth\(\)\}/);
   assert.match(photoFn, /PHOTO_FETCH_MONTHLY_CAP/);
@@ -39,7 +42,7 @@ test('billing month follows US Pacific time (when Google resets free usage)', ()
 test('cached photos are redirected before any rate limit; only the Google path is limited', () => {
   const redirect = photoFn.indexOf('status: 302');
   const burst = photoFn.indexOf('slidingWindowAllow(requestStamps');
-  const extraGuard = photoFn.indexOf('googleMayFetchPhoto(index)');
+  const extraGuard = photoFn.indexOf('googleMayFetchPhoto(index, names.length)');
   const google = photoFn.indexOf('places.googleapis.com');
   assert.ok(redirect > 0 && burst > 0 && extraGuard > 0 && google > 0);
   assert.ok(redirect < extraGuard, 'cache hit first');
@@ -72,7 +75,7 @@ test('a near-me point is rounded before it goes into a shared room', () => {
 test('carousel keeps photo 0 and drops extra photos that failed', () => {
   const url = (i) => `https://x/functions/v1/photo?id=abc&i=${i}`;
   assert.deepEqual(photoSlides(5, url, () => false), [0, 1, 2, 3, 4]);
-  const failed = new Set([url(0), url(2), url(4)]);
+  const failed = new Set([url(2), url(4)]);
   assert.deepEqual(photoSlides(5, url, (u) => failed.has(u)), [0, 1, 3]);
   assert.deepEqual(photoSlides(1, url, () => true), [0]);
   assert.deepEqual(photoSlides(0, url, () => false), []);

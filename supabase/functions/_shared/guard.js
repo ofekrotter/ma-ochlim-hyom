@@ -14,10 +14,20 @@ export const PHOTO_FETCH_DAILY_CAP = 800;
  * 661 places fit under this. Cached redirects do not spend it.
  */
 export const PHOTO_FETCH_MONTHLY_CAP = 900;
-/** Only the first photo of a place is ever downloaded from Google. Extra carousel photos are served only if already cached. */
-export const GOOGLE_PHOTO_INDEXES = [0];
-export function googleMayFetchPhoto(index) {
-  return GOOGLE_PHOTO_INDEXES.includes(index);
+/**
+ * The ONE photo per place that may be downloaded from Google: the second photo when
+ * the place has at least two, else the first. Google's photo 0 is the Maps cover and
+ * is usually the storefront or the room; photo 1 is usually a dish. Every other photo
+ * is served only if it is already cached (an old cached photo 0 stays a free extra slide).
+ * Keep in sync with primaryPhotoIndex in src/lib/photos.ts.
+ */
+export function googlePhotoIndexFor(photoCount) {
+  return Number(photoCount) >= 2 ? 1 : 0;
+}
+/** Indexes that can ever be fetched from Google (for an early, manifest-free 404). */
+export const GOOGLE_PHOTO_INDEXES = [0, 1];
+export function googleMayFetchPhoto(index, photoCount) {
+  return Number.isInteger(index) && index === googlePhotoIndexFor(photoCount);
 }
 /** Width requested from Google. Cards are ~400 CSS px wide; 480 keeps egress about 3x lower than 800. */
 export const PHOTO_MAX_WIDTH_PX = 480;
