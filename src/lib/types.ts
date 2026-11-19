@@ -50,12 +50,18 @@ export interface LocationChoice {
   areaId?: string;
 }
 
+export type DeckSort = 'mixed' | 'nearest';
+
 export interface Settings {
   mode: Mode;
   location: LocationChoice | null;
   radius: number; // meters
   prices: (1 | 2 | 3)[]; // empty = all
   cuisines: CuisineKey[]; // empty = all
+  /** null or omitted = no minimum. A place with no rating is dropped only when this is set. */
+  minRating?: number | null;
+  /** omitted = popularity shuffle. nearest = closest to the chosen point first. */
+  sort?: DeckSort;
 }
 
 export interface DeckCard extends Restaurant {

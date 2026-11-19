@@ -6,7 +6,7 @@ import { useFlow } from '../state/flow';
 const FEATURES = [
   { emoji: '🎯', title: 'סינון חכם', text: 'מרחק, מחיר, סוג אוכל — ורק מה שפתוח' },
   { emoji: '👆', title: 'החלקה כמו בטינדר', text: 'ימינה אהבתי, שמאלה דלג' },
-  { emoji: '💘', title: 'עם חבר', text: 'מחליקים יחד, ומצמצמים ל-1–3 מקומות' },
+  { emoji: '💘', title: 'עם חברים', text: 'קבוצה של עד 6, ואז 1–3 מקומות' },
 ];
 
 const MINI = [
@@ -47,7 +47,7 @@ export default function Landing() {
           יאללה, נבחר
         </button>
         <Link to="/join" className="btn-ghost mt-2 text-sm">
-          קיבלתם קוד מחבר? הצטרפו כאן
+          קיבלתם קוד? הצטרפו לחדר
         </Link>
       </section>
 

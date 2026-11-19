@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { woltCitySlug, woltSearchUrl } from '../src/lib/wolt.ts';
+import { WOLT_CHECKED, WOLT_MATCHED, woltVenues } from '../src/data/wolt-venues.ts';
+import { woltCitySlug, woltSearchUrl, woltVenueFor } from '../src/lib/wolt.ts';
 
 test('tel aviv, herzliya and ramat gan share the Wolt tel-aviv area', () => {
   for (const area of ['tel-aviv', 'herzliya', 'ramat-gan']) {
@@ -25,6 +26,21 @@ test('a Hebrew address maps when the area id is missing', () => {
 
 test('a pin near Haifa picks haifa even without an area id', () => {
   assert.equal(woltCitySlug({ name: 'x', lat: 32.82, lng: 34.99 }), 'haifa');
+});
+
+test('a place with no confident Wolt match has no button, and a matched id opens its venue page', () => {
+  assert.equal(woltVenueFor('demo-001'), null);
+  assert.equal(woltVenueFor(''), null);
+  assert.equal(Object.keys(woltVenues).length, WOLT_MATCHED);
+  assert.ok(WOLT_MATCHED > 0);
+  assert.ok(WOLT_CHECKED >= WOLT_MATCHED);
+  for (const [id, venue] of Object.entries(woltVenues)) {
+    assert.equal(venue.url, `https://wolt.com/he/isr/${venue.city}/restaurant/${venue.slug}`);
+    assert.ok(venue.meters >= 0 && venue.meters <= 400, id);
+    assert.ok(venue.name && venue.slug && venue.city);
+  }
+  const [id, venue] = Object.entries(woltVenues)[0];
+  assert.equal(woltVenueFor(id)?.url, venue.url);
 });
 
 test('a place far from every known Wolt area falls back to the country search', () => {

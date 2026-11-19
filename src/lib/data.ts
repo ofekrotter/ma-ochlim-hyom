@@ -60,8 +60,24 @@ export interface FilterOpts {
   ignoreHours?: boolean;
 }
 
-/** Location + radius + price + open-now (cuisine applied separately so we can count per cuisine). */
-export function filterBase(all: Restaurant[], s: Pick<Settings, 'location' | 'radius' | 'prices'>, opts?: FilterOpts): DeckCard[] {
+/** Unknown price stays in every price selection. A chosen price drops only known other levels. */
+export function passesPrice(price: Restaurant['price'], selected: readonly (1 | 2 | 3)[]): boolean {
+  if (selected.length === 0) return true;
+  if (price == null) return true;
+  return selected.includes(price);
+}
+
+/**
+ * No minimum (null, omitted, or 0) keeps every place, including one with no rating.
+ * A minimum drops places below it, and places whose rating is missing.
+ */
+export function passesRating(rating: number | null | undefined, minRating: number | null | undefined): boolean {
+  if (minRating == null || !(minRating > 0)) return true;
+  return typeof rating === 'number' && Number.isFinite(rating) && rating >= minRating;
+}
+
+/** Location + radius + price + rating + open-now (cuisine applied separately so we can count per cuisine). */
+export function filterBase(all: Restaurant[], s: Pick<Settings, 'location' | 'radius' | 'prices'> & { minRating?: number | null }, opts?: FilterOpts): DeckCard[] {
   if (!s.location) return [];
   const { lat, lng } = s.location;
   const now = opts?.now ?? new Date();
@@ -69,8 +85,8 @@ export function filterBase(all: Restaurant[], s: Pick<Settings, 'location' | 'ra
   for (const r of all) {
     const distance = haversine(lat, lng, r.lat, r.lng);
     if (distance > s.radius) continue;
-    // Missing price ("unknown") is included in every price filter.
-    if (s.prices.length > 0 && r.price !== null && !s.prices.includes(r.price)) continue;
+    if (!passesPrice(r.price, s.prices)) continue;
+    if (!passesRating(r.rating, s.minRating)) continue;
     // Missing hours ("unknown") stay. Closed places drop out. See isOpenAt.
     if (!opts?.ignoreHours && !isOpenAt(r.hours, now)) continue;
     out.push({ ...r, distance });
@@ -91,15 +107,22 @@ export function cuisineCounts(list: DeckCard[]): Map<CuisineKey, number> {
 /** Builds the card order. Deterministic for a given seed (friend mode uses session code + round).
  *  `now` freezes open/closed for this deck so a minute boundary can't reshuffle mid-swipe.
  *  Friend decks are stored as ids at this moment; both people then see that same list. */
-export function buildDeck(all: Restaurant[], s: Settings, seed: string, now: Date = new Date()): DeckCard[] {
-  const filtered = filterCuisine(filterBase(all, s, { now }), s.cuisines);
+export function orderDeck(filtered: DeckCard[], sort: Settings['sort'], seed: string): DeckCard[] {
+  if (sort === 'nearest') {
+    return [...filtered].sort((a, b) => a.distance - b.distance || b.rating - a.rating).slice(0, DECK_LIMIT);
+  }
   // Favor well-known places a bit: take the strongest 2×limit by a popularity score, then shuffle.
   const scored = filtered
-    .map((r) => ({ r, score: r.rating * Math.log10(10 + r.ratings) }))
+    .map((r) => ({ r, score: r.rating * Math.log10(10 + (r.ratings || 0)) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, DECK_LIMIT * 2)
     .map((x) => x.r);
   return seededShuffle(scored, seed).slice(0, DECK_LIMIT);
+}
+
+export function buildDeck(all: Restaurant[], s: Settings, seed: string, now: Date = new Date()): DeckCard[] {
+  const filtered = filterCuisine(filterBase(all, s, { now }), s.cuisines);
+  return orderDeck(filtered, s.sort, seed);
 }
 
 /** Rebuild a stored deck (list of ids). Does not re-check hours: a friend deck is a shared snapshot from when the round was created. */

@@ -9,6 +9,7 @@ import { filterBase } from '../lib/data';
 import { fmtCount } from '../lib/format';
 import { formatDistance, getPosition } from '../lib/geo';
 import { useNow } from '../lib/useNow';
+import type { DeckSort } from '../lib/types';
 import { useRestaurants } from '../state/data';
 import { useFlow } from '../state/flow';
 
@@ -16,6 +17,13 @@ const PRICES: { v: 1 | 2 | 3; label: string; hint: string }[] = [
   { v: 1, label: '₪', hint: 'זול' },
   { v: 2, label: '₪₪', hint: 'בינוני' },
   { v: 3, label: '₪₪₪', hint: 'יקר' },
+];
+
+const RATINGS: { v: number | null; label: string }[] = [
+  { v: null, label: 'הכל' },
+  { v: 4, label: '4+' },
+  { v: 4.3, label: '4.3+' },
+  { v: 4.5, label: '4.5+' },
 ];
 
 export default function Where() {
@@ -46,6 +54,15 @@ export default function Where() {
     const prices = settings.prices.includes(v) ? settings.prices.filter((p) => p !== v) : [...settings.prices, v].sort();
     update({ prices });
     track('price_selected', { prices: prices.join(',') || 'all' });
+  }
+
+  function setRating(v: number | null) {
+    update({ minRating: v });
+    track('price_selected', { prices: settings.prices.join(',') || 'all', minRating: v ?? 'all' });
+  }
+
+  function setSort(sort: DeckSort) {
+    update({ sort });
   }
 
   function next() {
@@ -124,6 +141,19 @@ export default function Where() {
           <span>500 מ׳</span>
           <span>5 ק״מ</span>
         </div>
+        <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label="סדר הכרטיסים">
+          {([
+            ['mixed', 'מעורב'],
+            ['nearest', 'מהקרוב לרחוק'],
+          ] as const).map(([v, label]) => {
+            const on = (settings.sort ?? 'mixed') === v;
+            return (
+              <button key={v} type="button" aria-pressed={on} onClick={() => setSort(v)} className={on ? 'chip-on justify-center' : 'chip-off justify-center'}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       <section className="mt-7">
@@ -140,6 +170,21 @@ export default function Where() {
           })}
         </div>
         <p className="mt-2 text-xs text-ink-soft">{settings.prices.length === 0 ? 'לא נבחר מחיר = כל המחירים. ' : ''}מקומות בלי מידע על מחיר תמיד נכללים.</p>
+      </section>
+
+      <section className="mt-7">
+        <div className="font-bold">דירוג מינימלי</div>
+        <div className="mt-3 grid grid-cols-4 gap-2" role="group" aria-label="דירוג מינימלי">
+          {RATINGS.map((r) => {
+            const on = (settings.minRating ?? null) === r.v;
+            return (
+              <button key={r.label} type="button" onClick={() => setRating(r.v)} aria-pressed={on} className={`${on ? 'chip-on' : 'chip-off'} justify-center !px-2`}>
+                {r.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-xs text-ink-soft">בלי מינימום, מקום בלי דירוג נשאר. עם מינימום, רק מקום שעומד בו נשאר.</p>
       </section>
 
       <div className="mt-auto pt-6">

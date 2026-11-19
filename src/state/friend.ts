@@ -4,6 +4,7 @@ import { backend, SessionError, type SessionState } from '../lib/backend';
 import { RADIUS_MAX } from '../lib/config';
 import { buildDeck, deckFromIds } from '../lib/data';
 import {
+  candidatePlaceIds,
   fallbackShortlist,
   friendPhase,
   memberIsAway,
@@ -197,16 +198,22 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     [data, session],
   );
 
-  // likes per place this round (server likes + my optimistic likes)
+  // Shared likes this round: both people, or a strict majority once 3+ have joined.
+  // My likes are the optimistic local set so an undo drops a candidate immediately.
   const matches = useMemo(() => {
     if (!state || !mine) return [] as DeckCard[];
-    const byPlace = new Map<string, Set<string>>();
+    const likesByMember = new Map<string, Set<string>>();
+    const memberIds = state.members.map((m) => m.member_id);
+    if (!memberIds.includes(memberId)) memberIds.push(memberId);
+    for (const id of memberIds) likesByMember.set(id, new Set());
     for (const l of state.likes) {
       if (l.round !== round || l.member_id === memberId) continue;
-      if (!byPlace.has(l.place_id)) byPlace.set(l.place_id, new Set());
-      byPlace.get(l.place_id)!.add(l.member_id);
+      likesByMember.get(l.member_id)?.add(l.place_id);
     }
-    return deck.filter((c) => mine.likes.has(c.id) && (byPlace.get(c.id)?.size ?? 0) >= 1);
+    likesByMember.set(memberId, new Set(mine.likes));
+    const ids = candidatePlaceIds(deck.map((c) => c.id), likesByMember, memberIds);
+    const byId = new Map(deck.map((c) => [c.id, c]));
+    return ids.map((id) => byId.get(id)).filter((c): c is DeckCard => Boolean(c));
   }, [state, mine, deck, round, memberId]);
 
   // A mutual like is counted once, quietly. It does not end the session.
@@ -271,7 +278,7 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
         settings =
           settings.radius < RADIUS_MAX
             ? { ...settings, radius: Math.min(RADIUS_MAX, settings.radius + 1500) }
-            : { ...settings, prices: [], cuisines: [] };
+            : { ...settings, prices: [], cuisines: [], minRating: null };
       }
       const nextRound = session.round + 1;
       const ids = buildDeck(data.restaurants, settings, `${code}:${nextRound}`).map((r) => r.id);
@@ -296,14 +303,22 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   const deckDone = Boolean(mine && deck.length > 0 && mine.progress >= deck.length);
   const serverStopped = Boolean(me && me.round === round && me.finished);
   const iStopped = deckDone || (stoppedEarly === null ? serverStopped : stoppedEarly);
-  const friendStopped =
-    deck.length > 0 && others.some((m) => m.round === round && (m.finished || m.progress >= deck.length));
-  const friendStillSwiping =
-    deck.length > 0 &&
-    others.some((m) => online(m.last_seen) && !(m.round === round && (m.finished || m.progress >= deck.length)));
+  const otherStopped = (m: { round: number; finished: boolean; progress: number }) =>
+    deck.length > 0 && m.round === round && (m.finished || m.progress >= deck.length);
+  const friendStopped = others.some(otherStopped);
+  const friendStillSwiping = deck.length > 0 && others.some((m) => online(m.last_seen) && !otherStopped(m));
+  const memberCount = Math.max(1, state?.members.length ?? 1);
+  const stoppedCount = (iStopped ? 1 : 0) + others.filter(otherStopped).length;
   const mutualIds = matches.map((m) => m.id);
   const mutualKey = mutualIds.join('\0');
-  const phase: FriendPhase = friendPhase({ mutualIds, iStopped, friendStillSwiping, friendStopped });
+  const phase: FriendPhase = friendPhase({
+    mutualIds,
+    iStopped,
+    friendStillSwiping,
+    friendStopped,
+    memberCount,
+    stoppedCount,
+  });
 
   const picksByMember = useMemo(
     () => votesFromLikes(state?.likes ?? [], narrowVoteRound(round), mutualKey ? mutualKey.split('\0') : []),
@@ -394,7 +409,17 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     swipe,
     undo,
     canUndo: Boolean(mine && mine.progress > 0),
-    canResume: !deckDone && !friendStopped && !(phase.kind === 'narrow' && phase.reason === 'target'),
+    canResume:
+      !deckDone &&
+      (memberCount > 2
+        ? phase.kind === 'swipe' || phase.kind === 'waiting' || phase.kind === 'holding'
+        : !friendStopped && !(phase.kind === 'narrow' && phase.reason === 'target')),
+    memberCount,
+    room: {
+      count: memberCount,
+      finished: stoppedCount,
+      swiping: (iStopped ? 0 : 1) + others.filter((m) => !otherStopped(m)).length,
+    },
     stopSwiping,
     resumeSwiping,
     submitPicks,
