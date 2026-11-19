@@ -2,6 +2,7 @@ import { HAS_SUPABASE, SUPABASE_URL, DECK_LIMIT } from './config';
 import { placesContentFresh } from './publicSafety';
 import { haversine } from './geo';
 import { isOpenAt } from './hours';
+import { refineCuisine } from './cuisines';
 import { photoCountOf, photoQuery } from './photos';
 import { seededShuffle } from './shuffle';
 import type { CuisineKey, DeckCard, Restaurant, RestaurantData, Settings } from './types';
@@ -42,8 +43,12 @@ export function loadRestaurants(): Promise<RestaurantData> {
           skippedStale = true;
           continue;
         }
-        if (skippedStale && d.source === 'sample') return { ...d, notice: 'stale' };
-        return d;
+        const refined = { ...d, restaurants: d.restaurants.map((r) => {
+          const cuisine = refineCuisine(r.name, r.cuisine);
+          return cuisine === r.cuisine ? r : { ...r, cuisine };
+        }) };
+        if (skippedStale && d.source === 'sample') return { ...refined, notice: 'stale' as const };
+        return refined;
       }
       throw new Error('no-data');
     })();
@@ -100,6 +105,24 @@ export function filterBase(all: Restaurant[], s: Pick<Settings, 'location' | 'ra
     out.push({ ...r, distance });
   }
   return out;
+}
+
+/** Meters to the closest restaurant in the data, ignoring every filter. Infinity when there are none. */
+export function nearestRestaurantMeters(all: readonly Pick<Restaurant, 'lat' | 'lng'>[], lat: number, lng: number): number {
+  let best = Infinity;
+  for (const r of all) {
+    const d = haversine(lat, lng, r.lat, r.lng);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/**
+ * The point is outside every area we have restaurants for: even the widest
+ * radius would find nothing, so "increase the distance" is the wrong advice.
+ */
+export function outsideCoverage(all: readonly Pick<Restaurant, 'lat' | 'lng'>[], lat: number, lng: number, maxRadius: number): boolean {
+  return all.length > 0 && nearestRestaurantMeters(all, lat, lng) > maxRadius;
 }
 
 export function filterCuisine(list: DeckCard[], cuisines: CuisineKey[]): DeckCard[] {

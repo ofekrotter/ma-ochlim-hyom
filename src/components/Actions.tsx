@@ -29,7 +29,9 @@ export function NavButtons({ r, context }: { r: Restaurant; context: string }) {
         </a>
       )}
       <p className="col-span-2 text-center text-[10px] leading-snug text-ink-soft">
-        קישורים אל Google Maps, Waze ו-Wolt. האפליקציה לא קשורה אליהם ולא מאושרת על ידם.
+        {wolt
+          ? 'קישורים אל Google Maps, Waze ו-Wolt. האפליקציה לא קשורה אליהם ולא מאושרת על ידם.'
+          : 'קישורים אל Google Maps ו-Waze. האפליקציה לא קשורה אליהם ולא מאושרת על ידם.'}
       </p>
     </div>
   );

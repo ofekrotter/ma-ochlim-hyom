@@ -1,16 +1,20 @@
 import { animate, motion, useMotionValue, useReducedMotion, useTransform } from 'motion/react';
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
 import { photoUrl } from '../lib/data';
 import { photoCountOf, photoCreditOf, primaryPhotoIndex } from '../lib/photos';
+import { photoState, requestPhoto } from '../lib/photoLoader';
+import { enqueueSwipe, photoTapDirection } from '../lib/swipeQueue';
 import type { DeckCard, RestaurantData } from '../lib/types';
 import { IconHeart, IconUndo, IconX } from './Icons';
 import { PhotoCredit, Rating, Tags } from './Meta';
-import { Photo, PhotoBars, useCardSlides } from './Photo';
-import { markPhotoFailed, photoSlides } from '../lib/photoFailures';
+import { Photo, PhotoBars, useCardSlides, useSlidePosition } from './Photo';
 
 export type Dir = 'left' | 'right';
 export interface SwipeDeckHandle {
   swipe: (dir: Dir) => void;
+}
+interface TopCardHandle extends SwipeDeckHandle {
+  busy: () => boolean;
 }
 
 interface Props {
@@ -24,22 +28,46 @@ interface Props {
 
 const THRESHOLD = 110;
 const VELOCITY = 650;
-
 export const SwipeDeck = forwardRef<SwipeDeckHandle, Props>(function SwipeDeck({ cards, index, source, onSwipe, returning }, ref) {
-  const topRef = useRef<SwipeDeckHandle>(null);
-  useImperativeHandle(ref, () => ({ swipe: (d) => topRef.current?.swipe(d) }), []);
+  const topRef = useRef<TopCardHandle>(null);
+  const queue = useRef<Dir[]>([]);
+  const remaining = cards.length - index;
 
-  // Preload the next photos so the next card is instant.
+  const swipe = useCallback(
+    (d: Dir) => {
+      const top = topRef.current;
+      if (!top) return;
+      if (top.busy() || queue.current.length > 0) {
+        // The card in flight counts as one of the remaining cards.
+        queue.current = enqueueSwipe(queue.current, d, remaining - 1);
+        return;
+      }
+      top.swipe(d);
+    },
+    [remaining],
+  );
+  useImperativeHandle(ref, () => ({ swipe }), [swipe]);
+
+  // A new top card is up: play the next queued swipe, if any.
+  const topId = cards[index]?.id;
+  useEffect(() => {
+    if (!topId) {
+      queue.current = [];
+      return;
+    }
+    if (queue.current.length === 0) return;
+    const t = setTimeout(() => {
+      const next = queue.current.shift();
+      if (next) topRef.current?.swipe(next);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [topId]);
+
+  // Preload the photo the next cards open on, so they show right away.
   useEffect(() => {
     for (const c of cards.slice(index + 1, index + 4)) {
-      // The photo the card will open on (food photo first, or its cached fallback).
-      const first = photoSlides(photoCountOf(c), (i) => photoUrl(c, source, i), undefined, primaryPhotoIndex(c))[0];
-      const src = first === undefined ? null : photoUrl(c, source, first);
-      if (src) {
-        const img = new Image();
-        img.decoding = 'async';
-        img.src = src;
-      }
+      const src = photoUrl(c, source, primaryPhotoIndex(c));
+      if (src) requestPhoto(src, 2);
     }
   }, [cards, index, source]);
 
@@ -49,7 +77,7 @@ export const SwipeDeck = forwardRef<SwipeDeckHandle, Props>(function SwipeDeck({
       {visible
         .map((card, i) =>
           i === 0 ? (
-            <TopCard key={card.id} ref={topRef} card={card} source={source} onSwipe={onSwipe} returning={returning?.id === card.id ? returning.dir : null} />
+            <TopCard key={card.id} ref={topRef} card={card} source={source} onSwipe={onSwipe} returning={returning?.id === card.id ? returning.dir : null} hurry={() => queue.current.length > 0} />
           ) : (
             <motion.div
               key={card.id}
@@ -60,7 +88,7 @@ export const SwipeDeck = forwardRef<SwipeDeckHandle, Props>(function SwipeDeck({
               style={{ zIndex: 10 - i }}
               aria-hidden
             >
-              <CardFace card={card} source={source} />
+              <CardFace card={card} source={source} priority={2} />
             </motion.div>
           ),
         )
@@ -69,15 +97,15 @@ export const SwipeDeck = forwardRef<SwipeDeckHandle, Props>(function SwipeDeck({
   );
 });
 
-const TopCard = forwardRef<SwipeDeckHandle, { card: DeckCard; source: RestaurantData['source']; onSwipe: Props['onSwipe']; returning: Dir | null }>(function TopCard(
-  { card, source, onSwipe, returning },
-  ref,
-) {
+const TopCard = forwardRef<
+  TopCardHandle,
+  { card: DeckCard; source: RestaurantData['source']; onSwipe: Props['onSwipe']; returning: Dir | null; hurry: () => boolean }
+>(function TopCard({ card, source, onSwipe, returning, hurry }, ref) {
   const reduce = useReducedMotion();
-  const slides = useCardSlides(card, source);
-  const count = slides.length;
-  const [photoPos, setPhotoPos] = useState(0);
-  const slot = Math.min(photoPos, Math.max(0, count - 1));
+  // The open card asks for all of its photos (cached extras only) so the dots are known up front.
+  const { slides, settled } = useCardSlides(card, source, true, 0);
+  const { slot, current, step } = useSlidePosition(slides);
+  const count = settled ? slides.length : 1;
   const elRef = useRef<HTMLDivElement>(null);
   const x = useMotionValue(returning ? (returning === 'right' ? 500 : -500) : 0);
   const opacity = useMotionValue(1);
@@ -91,29 +119,6 @@ const TopCard = forwardRef<SwipeDeckHandle, { card: DeckCard; source: Restaurant
     if (returning) animate(x, 0, { type: 'spring', stiffness: 380, damping: 32 });
   }, [returning, x]);
 
-  // The <img> loads the current frame. Preload only the following one, and only after
-  // the viewer has moved past the first photo — never all of them up front.
-  // A following photo that is not cached drops out of the carousel before it is reached.
-  const nextIndex = slides[slot + 1];
-  useEffect(() => {
-    if (slot < 1 || nextIndex === undefined) return;
-    const next = photoUrl(card, source, nextIndex);
-    if (!next) return;
-    const img = new Image();
-    img.decoding = 'async';
-    img.onerror = () => markPhotoFailed(next);
-    img.src = next;
-  }, [card, source, slot, nextIndex]);
-
-  function stepPhoto(dir: -1 | 1) {
-    setPhotoPos((i) => {
-      const cur = Math.max(0, Math.min(i, count - 1));
-      const n = cur + dir;
-      if (n < 0 || n >= count) return cur;
-      return n;
-    });
-  }
-
   function fly(dir: Dir) {
     if (leaving.current) return;
     leaving.current = true;
@@ -123,10 +128,12 @@ const TopCard = forwardRef<SwipeDeckHandle, { card: DeckCard; source: Restaurant
       return;
     }
     const w = Math.max(window.innerWidth, 400);
-    animate(x, dir === 'right' ? w * 1.15 : -w * 1.15, { duration: 0.3, ease: [0.3, 0.6, 0.4, 1] }).then(() => onSwipe(dir, card));
+    // Shorter flight while more swipes are waiting, so a burst of keys keeps up.
+    const duration = hurry() ? 0.16 : 0.3;
+    animate(x, dir === 'right' ? w * 1.15 : -w * 1.15, { duration, ease: [0.3, 0.6, 0.4, 1] }).then(() => onSwipe(dir, card));
   }
 
-  useImperativeHandle(ref, () => ({ swipe: fly }));
+  useImperativeHandle(ref, () => ({ swipe: fly, busy: () => leaving.current }));
 
   return (
     <motion.div
@@ -153,7 +160,8 @@ const TopCard = forwardRef<SwipeDeckHandle, { card: DeckCard; source: Restaurant
         if (target?.closest('a, button')) return;
         const rect = elRef.current?.getBoundingClientRect();
         if (!rect) return;
-        stepPhoto(e.clientX < rect.left + rect.width / 2 ? -1 : 1);
+        // RTL, like the dots: the left half moves forward, the right half goes back.
+        step(photoTapDirection(e.clientX, rect.left, rect.width));
       }}
       onDragEnd={(_, info) => {
         const off = info.offset.x;
@@ -166,7 +174,7 @@ const TopCard = forwardRef<SwipeDeckHandle, { card: DeckCard; source: Restaurant
       aria-roledescription="כרטיס מסעדה"
       aria-label={count > 1 ? `${card.name}, תמונה ${slot + 1} מתוך ${count}` : card.name}
     >
-      <CardFace card={card} source={source} eager photoPos={slot} />
+      <CardFace card={card} source={source} photoIndex={current} photoSlot={slot} photoCount={count} />
       <motion.div style={{ opacity: likeOpacity }} className="pointer-events-none absolute left-5 top-12 z-30 -rotate-12 rounded-xl border-4 border-basil bg-white/85 px-3 py-1 text-3xl font-extrabold text-basil" aria-hidden>
         אהבתי
       </motion.div>
@@ -177,16 +185,42 @@ const TopCard = forwardRef<SwipeDeckHandle, { card: DeckCard; source: Restaurant
   );
 });
 
-export function CardFace({ card, source, eager = false, photoPos = 0 }: { card: DeckCard; source: RestaurantData['source']; eager?: boolean; photoPos?: number }) {
-  const slides = useCardSlides(card, source);
-  const count = slides.length;
-  const slot = count > 0 ? Math.min(photoPos, count - 1) : 0;
-  const index = slides[slot] ?? 0;
-  const alt = count > 1 ? `${card.name}, תמונה ${slot + 1} מתוך ${count}` : card.name;
+/**
+ * One restaurant card. Without `photoIndex` it shows the photo the card opens on
+ * (with fallback). `overlay` sits above the photo and below the photo credit, for
+ * a full-card button that must not wrap the credit link.
+ */
+export function CardFace({
+  card,
+  source,
+  photoIndex,
+  photoSlot = 0,
+  photoCount,
+  priority = 0,
+  overlay,
+}: {
+  card: DeckCard;
+  source: RestaurantData['source'];
+  /** Kept for callers. */
+  eager?: boolean;
+  photoIndex?: number;
+  photoSlot?: number;
+  photoCount?: number;
+  priority?: 0 | 1 | 2;
+  overlay?: ReactNode;
+}) {
+  const own = useCardSlides(card, source, false, priority);
+  const index = photoIndex ?? own.slides[0] ?? 0;
+  const count = photoCount ?? 1;
+  const src = photoUrl(card, source, index);
+  // The author credit is about the photo: show it only while that photo is on screen.
+  const photoShown = photoCountOf(card) > 0 && photoState(src).status === 'ok';
+  const alt = count > 1 ? `${card.name}, תמונה ${photoSlot + 1} מתוך ${count}` : card.name;
   return (
     <article className="card relative h-full w-full select-none overflow-hidden">
-      <Photo src={photoUrl(card, source, index)} cuisine={card.cuisine} alt={alt} className="absolute inset-0" eager={eager} />
-      <PhotoBars count={count} index={slot} />
+      <Photo src={src} cuisine={card.cuisine} alt={alt} className="absolute inset-0" priority={priority} />
+      <PhotoBars count={count} index={photoSlot} />
+      {overlay}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-5 pb-4 pt-24 text-white">
         <h2 className="text-[1.7rem] font-bold leading-tight drop-shadow">{card.name}</h2>
         <div className="mt-1.5 text-[15px]">
@@ -195,8 +229,8 @@ export function CardFace({ card, source, eager = false, photoPos = 0 }: { card: 
         <div className="mt-2.5">
           <Tags r={card} light />
         </div>
-        <div className="pointer-events-auto mt-2.5">
-          <PhotoCredit r={card} credit={photoCreditOf(card, index)} light />
+        <div className="pointer-events-auto relative z-20 mt-2.5 w-fit">
+          <PhotoCredit r={card} credit={photoShown ? photoCreditOf(card, index) : null} light />
         </div>
       </div>
     </article>
@@ -225,6 +259,10 @@ export function useSwipeKeys(enabled: boolean, onDir: (d: Dir) => void, onUndo?:
     if (!enabled) return;
     const h = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.defaultPrevented || e.altKey) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      // Held-down keys auto-repeat; only real presses count. Each press is queued like a button tap.
+      if (e.repeat && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) return;
       if (e.key === 'ArrowRight') onDir('right');
       else if (e.key === 'ArrowLeft') onDir('left');
       else if ((e.key === 'z' && (e.ctrlKey || e.metaKey)) || e.key === 'Backspace') onUndo?.();

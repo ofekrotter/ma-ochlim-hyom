@@ -5,7 +5,7 @@ import { IconPin } from '../components/Icons';
 import { track } from '../lib/analytics';
 import { AREAS, DEFAULT_AREA } from '../lib/areas';
 import { RADIUS_MAX, RADIUS_MIN } from '../lib/config';
-import { filterBase } from '../lib/data';
+import { filterBase, outsideCoverage } from '../lib/data';
 import { fmtCount } from '../lib/format';
 import { formatDistance, getPosition } from '../lib/geo';
 import { useNow } from '../lib/useNow';
@@ -40,6 +40,9 @@ export default function Where() {
   const openCount = useMemo(() => (data ? filterBase(data.restaurants, settings, { now }).length : null), [data, settings, now]);
   const anyCount = useMemo(() => (data ? filterBase(data.restaurants, settings, { now, ignoreHours: true }).length : null), [data, settings, now]);
   const allClosed = openCount === 0 && (anyCount ?? 0) > 0;
+  const loc = settings.location;
+  const outside = useMemo(() => Boolean(data && loc && outsideCoverage(data.restaurants, loc.lat, loc.lng, RADIUS_MAX)), [data, loc]);
+  const coveredCities = useMemo(() => [...new Set(AREAS.map((a) => (a.group === 'תל אביב-יפו' ? 'תל אביב-יפו' : a.label.split(' – ')[0])))].join(', '), []);
 
   async function useGps() {
     setGeo('loading');
@@ -102,7 +105,8 @@ export default function Where() {
         <label className="block">
           <span className="mb-1.5 block text-sm font-medium text-ink-soft">או בחרו אזור</span>
           <select
-            className={`w-full appearance-none rounded-2xl border bg-white px-4 py-3.5 text-base ${geo === 'denied' ? 'border-tomato ring-2 ring-tomato/30' : 'border-charcoal/10'}`}
+            id="area-select"
+            className={`w-full appearance-none rounded-2xl border bg-white px-4 py-3.5 text-base ${geo === 'denied' || outside ? 'border-tomato ring-2 ring-tomato/30' : 'border-charcoal/10'}`}
             value={isGps ? '' : settings.location?.areaId ?? DEFAULT_AREA.id}
             onChange={(e) => {
               const a = AREAS.find((x) => x.id === e.target.value);
@@ -192,6 +196,22 @@ export default function Where() {
           <div role="alert" className="mb-3 rounded-2xl bg-tomato-soft p-4 text-center text-sm text-tomato-dark">
             לא הצלחנו לטעון את רשימת המסעדות. בדקו את החיבור לאינטרנט.
             <button className="btn-ghost mx-auto mt-1 !text-tomato-dark underline" onClick={retry}>נסו שוב</button>
+          </div>
+        ) : outside ? (
+          <div role="status" className="mb-3 rounded-2xl bg-mustard/20 p-4 text-center text-sm">
+            📍 {isGps ? 'המיקום שלך מחוץ לאזורים שיש לנו בהם מסעדות כרגע.' : 'אין לנו עדיין מסעדות באזור הזה.'}
+            <span className="mt-1 block text-xs">אנחנו מכסים כרגע את: {coveredCities}.</span>
+            <button
+              type="button"
+              className="btn-ghost mx-auto mt-1 !text-tomato-dark underline"
+              onClick={() => {
+                const el = document.getElementById('area-select');
+                el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                el?.focus();
+              }}
+            >
+              בחירת אזור מהרשימה
+            </button>
           </div>
         ) : allClosed ? (
           <p role="status" className="mb-3 rounded-2xl bg-mustard/20 p-4 text-center text-sm">

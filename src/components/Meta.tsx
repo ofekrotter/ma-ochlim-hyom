@@ -5,8 +5,12 @@ import { safeHttpsUrl } from '../lib/publicSafety';
 import type { DeckCard, Restaurant } from '../lib/types';
 import { IconStar } from './Icons';
 
-/** Colored wordmark required when Places content is on screen. Text, not a copied logo file. */
-function GoogleWordmark() {
+/**
+ * Colored wordmark required when Places content is on screen. Text, not a copied logo file.
+ * Its own left-to-right island: the page is RTL, and separate letter spans would
+ * otherwise be laid out right to left ("elgooG").
+ */
+export function GoogleWordmark() {
   const letters: [string, string][] = [
     ['G', '#4285F4'],
     ['o', '#EA4335'],
@@ -16,7 +20,7 @@ function GoogleWordmark() {
     ['e', '#EA4335'],
   ];
   return (
-    <span translate="no" className="inline-flex font-semibold tracking-tight" aria-label="Google">
+    <span translate="no" dir="ltr" className="inline-flex font-semibold tracking-tight [unicode-bidi:isolate]" aria-label="Google">
       {letters.map(([letter, color], i) => (
         <span key={i} style={{ color }}>{letter}</span>
       ))}
@@ -46,9 +50,14 @@ export function Tags({ r, light = false }: { r: DeckCard | (Restaurant & { dista
   );
 }
 
-export function PhotoCredit({ r, light = false, credit }: { r: Restaurant; light?: boolean; credit?: { name: string; uri: string } }) {
-  const name = (credit?.name ?? r.photoAuthor ?? '').slice(0, 120);
-  const uri = safeHttpsUrl(credit?.uri ?? r.photoAuthorUri ?? '');
+/**
+ * "Photo: <author> · Google Maps". `credit === null` means no photo is on screen
+ * (only the illustration): then only the Google Maps attribution for the place
+ * details stays. `undefined` keeps the legacy single-author fallback.
+ */
+export function PhotoCredit({ r, light = false, credit }: { r: Restaurant; light?: boolean; credit?: { name: string; uri: string } | null }) {
+  const name = credit === null ? '' : (credit?.name ?? r.photoAuthor ?? '').slice(0, 120);
+  const uri = credit === null ? '' : safeHttpsUrl(credit?.uri ?? r.photoAuthorUri ?? '');
   return (
     <p className={`text-[10px] leading-tight ${light ? 'text-white/70' : 'text-ink-soft'}`}>
       {name ? (
@@ -64,7 +73,9 @@ export function PhotoCredit({ r, light = false, credit }: { r: Restaurant; light
           ·{' '}
         </>
       ) : null}
-      <GoogleWordmark /> <span translate="no">Maps</span>
+      <bdi dir="ltr" translate="no" className="inline-flex gap-[0.25em]">
+        <GoogleWordmark /> <span>Maps</span>
+      </bdi>
     </p>
   );
 }

@@ -83,7 +83,19 @@ const CUISINE_RULES = [
   ['middle_eastern', ['middle_eastern_restaurant', 'lebanese_restaurant', 'turkish_restaurant', 'mediterranean_restaurant', 'greek_restaurant', 'afghani_restaurant']],
   ['vegetarian', ['vegan_restaurant', 'vegetarian_restaurant']],
   ['cafe', ['cafe', 'coffee_shop', 'brunch_restaurant', 'breakfast_restaurant', 'bakery']],
+  // Last, so a pizzeria or sushi place that also serves drinks keeps its food label.
+  ['bar', ['bar', 'pub', 'wine_bar', 'cocktail_bar', 'beer_garden', 'brewpub', 'brewery', 'gastropub', 'bar_and_grill', 'irish_pub', 'sports_bar', 'lounge_bar']],
 ];
+
+/** No postal code or country in the stored address (same rule as src/lib/format.ts cleanAddress). */
+export function cleanAddress(address) {
+  if (!address) return '';
+  return String(address)
+    .split(',')
+    .map((part) => part.trim().replace(/\s+\d{7}$/, ''))
+    .filter((part) => part && !/^\d{5,7}$/.test(part) && !/^(ישראל|Israel)$/i.test(part))
+    .join(', ');
+}
 
 export function deriveCuisine(primaryType, types) {
   const all = [primaryType, ...(types || [])].filter(Boolean);
@@ -160,7 +172,7 @@ export function cleanPlace(p, area) {
   return {
     id: p.id,
     name: (p.displayName && p.displayName.text) || '',
-    address: p.formattedAddress || '',
+    address: cleanAddress(p.formattedAddress || ''),
     lat: Number(p.location.latitude.toFixed(6)),
     lng: Number(p.location.longitude.toFixed(6)),
     rating: p.rating,
