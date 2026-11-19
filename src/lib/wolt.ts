@@ -1,3 +1,5 @@
+import { woltVenues, type WoltVenueLink } from '../data/wolt-venues.ts';
+
 /** Sphere distance in meters. */
 function metersBetween(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000;
@@ -57,6 +59,15 @@ export function woltCitySlug(place: WoltPlace): string | null {
     if (best && best.meters <= MAX_CITY_METERS) return best.slug;
   }
   return null;
+}
+
+/**
+ * Venue page when scripts/match-wolt.ts confidently matched this place.
+ * No match → null, and the button stays hidden. A name search would open
+ * other restaurants, which is worse than no link.
+ */
+export function woltVenueFor(placeId: string): WoltVenueLink | null {
+  return woltVenues[placeId] ?? null;
 }
 
 /** Opens the Wolt site (and the app, via their universal link) on a name search. */

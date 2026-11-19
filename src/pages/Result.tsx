@@ -42,7 +42,7 @@ export default function Result() {
     nav('/swipe');
   }
   function widen() {
-    update({ radius: Math.min(RADIUS_MAX, settings.radius + 1500), prices: [] });
+    update({ radius: Math.min(RADIUS_MAX, settings.radius + 1500), prices: [], minRating: null });
     newSoloRun();
     nav('/where');
   }

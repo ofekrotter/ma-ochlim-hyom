@@ -3,8 +3,10 @@ import {
   MUTUAL_TARGET,
   PICK_CAP,
   SHORTLIST_MAX,
+  candidatePlaceIds,
   fallbackShortlist,
   friendPhase,
+  likesNeeded,
   memberIsAway,
   narrowVoteRound,
   VOTE_AWAY_MS,
@@ -181,6 +183,61 @@ describe('narrowing votes', () => {
     expect(memberIsAway(new Date(now - 90_000).toISOString(), now)).toBe(false);
     expect(memberIsAway(new Date(now - VOTE_AWAY_MS - 1).toISOString(), now)).toBe(true);
     expect(memberIsAway('not-a-date', now)).toBe(false);
+  });
+
+  it('a pair needs both likes, a group needs a strict majority, in deck order', () => {
+    expect(likesNeeded(1)).toBe(2);
+    expect(likesNeeded(2)).toBe(2);
+    expect(likesNeeded(3)).toBe(2);
+    expect(likesNeeded(4)).toBe(3);
+    expect(likesNeeded(5)).toBe(3);
+    expect(likesNeeded(6)).toBe(4);
+    const deck = ['a', 'b', 'c'];
+    const likes = new Map<string, Set<string>>([
+      ['m1', new Set(['a', 'b'])],
+      ['m2', new Set(['a'])],
+      ['m3', new Set(['b', 'c'])],
+      ['m4', new Set(['a', 'b'])],
+    ]);
+    expect(candidatePlaceIds(deck, likes, ['m1', 'm2'])).toEqual(['a']);
+    expect(candidatePlaceIds(deck, likes, ['m1', 'm2', 'm3'])).toEqual(['a', 'b']);
+    expect(candidatePlaceIds(deck, likes, ['m1', 'm2', 'm3', 'm4'])).toEqual(['a', 'b']);
+  });
+
+  it('one person tapping finish does not end a group of three', () => {
+    expect(
+      friendPhase({
+        mutualIds: ['a', 'b'],
+        iStopped: true,
+        friendStillSwiping: true,
+        friendStopped: false,
+        memberCount: 3,
+        stoppedCount: 1,
+      }),
+    ).toEqual({ kind: 'holding', ids: ['a', 'b'] });
+  });
+
+  it('a majority stop, or five shared places, narrows the group the same way a pair does', () => {
+    expect(
+      friendPhase({
+        mutualIds: ['a', 'b'],
+        iStopped: true,
+        friendStillSwiping: true,
+        friendStopped: true,
+        memberCount: 3,
+        stoppedCount: 2,
+      }),
+    ).toEqual({ kind: 'final', ids: ['a', 'b'] });
+    expect(
+      friendPhase({
+        mutualIds: ['a', 'b', 'c', 'd', 'e'],
+        iStopped: false,
+        friendStillSwiping: true,
+        friendStopped: false,
+        memberCount: 6,
+        stoppedCount: 0,
+      }),
+    ).toEqual({ kind: 'narrow', ids: ['a', 'b', 'c', 'd', 'e'], reason: 'target' });
   });
 
   it('falls back to the first 1–3 mutuals when votes cannot be saved', () => {

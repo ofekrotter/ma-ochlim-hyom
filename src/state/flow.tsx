@@ -3,7 +3,7 @@ import { RADIUS_DEFAULT } from '../lib/config';
 import type { Settings } from '../lib/types';
 
 const KEY = 'mo:settings';
-const DEFAULTS: Settings = { mode: 'solo', location: null, radius: RADIUS_DEFAULT, prices: [], cuisines: [] };
+const DEFAULTS: Settings = { mode: 'solo', location: null, radius: RADIUS_DEFAULT, prices: [], cuisines: [], minRating: null, sort: 'mixed' };
 
 interface FlowCtx {
   settings: Settings;

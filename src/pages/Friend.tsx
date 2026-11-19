@@ -21,12 +21,14 @@ import { useFriendSession } from '../state/friend';
 import { DemoBadge, Loading } from './shared';
 
 function inviteText(code: string, url: string) {
-  return `בוא נחליט איפה אוכלים! 🍕🍣🍔\nמחליקים על מסעדות כמו בטינדר, ואז מצמצמים ביחד לכמה מקומות.\nהקוד שלנו: ${code}\n${url}`;
+  return `בואו נחליט איפה אוכלים! 🍕🍣🍔\nמחליקים על מסעדות כמו בטינדר, ואז מצמצמים ביחד לכמה מקומות.\nהקוד שלנו: ${code}\n${url}`;
 }
 
 function settingsSummary(s: Settings) {
   const parts = [s.location?.label ?? '', `עד ${formatDistance(s.radius)}`];
   if (s.prices.length) parts.push(s.prices.map((p) => '₪'.repeat(p)).join('/'));
+  if (typeof s.minRating === 'number' && s.minRating > 0) parts.push(`דירוג ${s.minRating}+`);
+  if (s.sort === 'nearest') parts.push('מהקרוב');
   if (s.cuisines.length) parts.push(s.cuisines.map((c) => CUISINES[c].label).join(', '));
   return parts.filter(Boolean).join(' · ');
 }
@@ -110,7 +112,7 @@ export default function Friend() {
     return (
       <Screen>
         <TopBar back="/" />
-        <EmptyState emoji="🚪" title="החדר מלא" text="כבר יש מספיק אנשים בחדר הזה.">
+        <EmptyState emoji="🚪" title="החדר מלא" text="בחדר הזה כבר יש 6 אנשים, וזה המקסימום. אפשר לפתוח חדר חדש.">
           <button className="btn-primary" onClick={() => nav('/start')}>פותחים חדר משלכם</button>
         </EmptyState>
       </Screen>
@@ -140,7 +142,7 @@ export default function Friend() {
           </button>
         }
       />
-      <FriendIndicator friend={fs.friend} total={total} offline={fs.offline} />
+      <FriendIndicator friend={fs.friend} room={fs.room} total={total} offline={fs.offline} />
     </>
   );
 
@@ -151,8 +153,14 @@ export default function Friend() {
         {header}
         <div className="mt-6 text-center anim-rise">
           <div className="text-5xl" aria-hidden>{fs.creator ? '👯' : '🍽️'}</div>
-          <h1 className="mt-2 text-3xl font-extrabold">{fs.creator ? 'החדר מוכן! מזמינים חבר' : 'הוזמנת להחליט איפה אוכלים!'}</h1>
+          <h1 className="mt-2 text-3xl font-extrabold">{fs.creator ? 'החדר מוכן! מזמינים את כולם' : 'הוזמנתם להחליט איפה אוכלים!'}</h1>
           <p className="mt-2 text-ink-soft">{settingsSummary(fs.session.settings)} · {total} מקומות</p>
+          <p className="mt-2 text-sm text-ink-soft">
+            {fs.memberCount > 1 ? `${fs.memberCount} אנשים בחדר. ` : ''}
+            {fs.memberCount >= 3
+              ? 'מקום נכנס לרשימה כשרוב האנשים אהבו אותו, ואז מצמצמים ל-1–3.'
+              : 'מקום נכנס לרשימה כששניכם אהבתם אותו, ואז מצמצמים ל-1–3. אפשר לצרף עד 6.'}
+          </p>
         </div>
         {fs.creator && (
           <div className="card mt-6 p-5 text-center anim-pop">
@@ -175,7 +183,7 @@ export default function Friend() {
         )}
         <div className="mt-auto pt-6">
           <button className="btn-primary w-full" onClick={start}>
-            {fs.creator ? (fs.friend ? 'החבר כאן — מתחילים! 👆' : 'אפשר כבר להתחיל להחליק 👆') : 'יאללה, מתחילים 👆'}
+            {fs.creator ? (fs.memberCount >= 2 ? 'יש אנשים בחדר — מתחילים! 👆' : 'אפשר להתחיל, אחרים יצטרפו עם הקישור 👆') : 'יאללה, מתחילים 👆'}
           </button>
         </div>
       </Screen>
@@ -189,6 +197,7 @@ export default function Friend() {
     if (!ok) fs.refresh();
   };
   const cards = fs.matches;
+  const group = fs.memberCount >= 3;
 
   // ── Nothing in common yet ──
   if (fs.phase.kind === 'waiting') {
@@ -197,11 +206,13 @@ export default function Friend() {
         {header}
         <EmptyState
           emoji="🤝"
-          title="עוד אין מקום ששניכם אהבתם"
+          title={group ? 'עוד אין מקום שרוב הקבוצה אהבה' : 'עוד אין מקום ששניכם אהבתם'}
           text={
-            fs.friend
-              ? `החבר שלך בכרטיס ${Math.min(fs.friend.progress + 1, total)} מתוך ${total}. ברגע ששניכם תאהבו את אותו מקום, הוא ייכנס לרשימה.`
-              : 'החבר עוד לא הצטרף. שלחו לו את הקישור, או חזרו להחליק.'
+            group
+              ? `${fs.room.finished} מתוך ${fs.room.count} כבר סיימו. הרשימה מתעדכנת כשמצטברת רוב.`
+              : fs.friend
+                ? `החבר שלך בכרטיס ${Math.min(fs.friend.progress + 1, total)} מתוך ${total}. ברגע ששניכם תאהבו את אותו מקום, הוא ייכנס לרשימה.`
+                : 'החבר עוד לא הצטרף. שלחו לו את הקישור, או חזרו להחליק.'
           }
         >
           {!fs.friend && <button className="btn-primary" onClick={() => setStarted(false)}>הזמנת חבר</button>}
@@ -219,13 +230,15 @@ export default function Friend() {
         {header}
         <EmptyState
           emoji="😅"
-          title={fs.friend ? 'אין מאץ׳ הפעם' : 'עדיין לבד בחדר'}
+          title={!fs.friend ? 'עדיין לבד בחדר' : group ? 'אין מאץ׳ הפעם' : 'אין מאץ׳ הפעם'}
           text={
             !fs.friend
-              ? 'החבר עוד לא הצטרף. שלחו לו את הקישור!'
-              : friendLeft
+              ? 'עוד לא הצטרף אף אחד. שלחו את הקישור!'
+              : friendLeft && !group
                 ? 'החבר לא מחובר, ועדיין אין מקום ששניכם אהבתם. אפשר להמשיך להחליק או לפתוח סיבוב חדש.'
-                : 'סיימתם את הכרטיסים בלי מקום ששניכם אהבתם. ננסה שוב?'
+                : group
+                  ? 'סיימתם בלי מקום שרוב הקבוצה אהבה. ננסה שוב?'
+                  : 'סיימתם את הכרטיסים בלי מקום ששניכם אהבתם. ננסה שוב?'
           }
         >
           {!fs.friend && <button className="btn-primary" onClick={() => setStarted(false)}>הזמנת חבר</button>}
@@ -239,7 +252,7 @@ export default function Friend() {
   // ── 1–3 places, or a finished re-vote ──
   if (finalIds) {
     const chosen = finalIds.map((id) => cards.find((c) => c.id === id)).filter((c): c is DeckCard => Boolean(c));
-    const copy = shortlistCopy(chosen.length, finalKind);
+    const copy = shortlistCopy(chosen.length, finalKind, group);
     return (
       <Screen>
         {header}
@@ -267,7 +280,22 @@ export default function Friend() {
     );
   }
 
-  // ── Re-vote among the mutual likes ──
+  if (fs.phase.kind === 'holding') {
+    const held = fs.phase.ids.map((id) => cards.find((c) => c.id === id)).filter((c): c is DeckCard => Boolean(c));
+    return (
+      <Screen>
+        {header}
+        <div className="mt-4 text-center">
+          <h1 className="text-3xl font-extrabold">יש כבר {held.length} מקומות</h1>
+          <p className="mt-1 text-ink-soft">רוב הקבוצה עוד לא סיימה. הרשימה ננעלת כשמספיק אנשים לוחצים סיימתי.</p>
+        </div>
+        <MatchList matches={held} source={data.source} />
+        {fs.canResume && <button className="btn-primary mt-4" onClick={fs.resumeSwiping}>ממשיכים להחליק</button>}
+      </Screen>
+    );
+  }
+
+  // ── Re-vote among the shared likes ──
   if (fs.phase.kind === 'narrow') {
     return (
       <Screen>
@@ -276,6 +304,7 @@ export default function Friend() {
           mutuals={cards.filter((c) => fs.phase.kind === 'narrow' && fs.phase.ids.includes(c.id))}
           source={data.source}
           reason={fs.phase.reason}
+          group={group}
           waitingIds={fs.resolution?.status === 'waiting' ? fs.resolution.ids : null}
           pendingFriends={fs.pendingFriends}
           friendAway={fs.friendAway}
@@ -316,9 +345,13 @@ export default function Friend() {
       </div>
       {fs.matches.length > 0 && (
         <p className="mb-2 text-center text-sm text-ink-soft">
-          {fs.matches.length === 1
-            ? 'מקום אחד ששניכם אוהבים. ממשיכים להחליק, או שסיימתם ומצמצמים?'
-            : `${fs.matches.length} מקומות ששניכם אוהבים. ממשיכים להחליק, או שסיימתם ומצמצמים?`}
+          {group
+            ? fs.matches.length === 1
+              ? 'מקום אחד שרוב הקבוצה אוהבת. ממשיכים להחליק, או שסיימתם ומצמצמים?'
+              : `${fs.matches.length} מקומות שרוב הקבוצה אוהבת. ממשיכים להחליק, או שסיימתם ומצמצמים?`
+            : fs.matches.length === 1
+              ? 'מקום אחד ששניכם אוהבים. ממשיכים להחליק, או שסיימתם ומצמצמים?'
+              : `${fs.matches.length} מקומות ששניכם אוהבים. ממשיכים להחליק, או שסיימתם ומצמצמים?`}
         </p>
       )}
       {data.source === 'sample' && <DemoBadge />}
@@ -326,7 +359,7 @@ export default function Friend() {
       <SwipeButtons onSkip={() => swipeBtn('left')} onLike={() => swipeBtn('right')} onUndo={undo} canUndo={fs.canUndo} disabled={!swiping} />
 
       {showMatches && (
-        <Sheet onClose={() => setShowMatches(false)} title="מקומות ששניכם אוהבים">
+        <Sheet onClose={() => setShowMatches(false)} title={group ? 'מקומות שרוב הקבוצה אוהבת' : 'מקומות ששניכם אוהבים'}>
           <p className="mt-2 text-sm text-ink-soft">זה עדיין לא הסוף. ממשיכים להחליק, וכשתרצו — סיימתי, ומצמצמים ל-1–3.</p>
           <MatchList matches={fs.matches} source={data.source} />
         </Sheet>
@@ -335,18 +368,33 @@ export default function Friend() {
   );
 }
 
-function FriendIndicator({ friend, total, offline }: { friend: { online: boolean; progress: number; finished: boolean } | null; total: number; offline: boolean }) {
+function FriendIndicator({
+  friend,
+  room,
+  total,
+  offline,
+}: {
+  friend: { online: boolean; progress: number; finished: boolean } | null;
+  room: { count: number; finished: number; swiping: number };
+  total: number;
+  offline: boolean;
+}) {
   if (offline) {
     return <p role="status" className="mt-1 rounded-full bg-mustard/25 px-3 py-1.5 text-center text-xs">⚠️ אין חיבור — ממשיכים לנסות להתחבר…</p>;
   }
-  return (
-    <p role="status" aria-live="polite" className="mt-1 flex items-center justify-center gap-2 rounded-full bg-white/70 px-3 py-1.5 text-center text-xs shadow-sm">
-      <span className={`inline-block h-2 w-2 rounded-full ${friend?.online ? 'bg-basil' : friend ? 'bg-charcoal/30' : 'animate-pulse bg-mustard'}`} aria-hidden />
-      {!friend
+  const dot = friend?.online || room.count >= 3 ? 'bg-basil' : friend ? 'bg-charcoal/30' : 'animate-pulse bg-mustard';
+  const label =
+    room.count >= 3
+      ? `${room.count} אנשים בחדר · ${room.finished} סיימו`
+      : !friend
         ? 'מחכים שהחבר יצטרף…'
         : friend.finished
           ? 'החבר שלך סיים להחליק ✓'
-          : `החבר שלך בכרטיס ${Math.min(friend.progress + 1, total)} מתוך ${total}${friend.online ? '' : ' (לא מחובר כרגע)'}`}
+          : `החבר שלך בכרטיס ${Math.min(friend.progress + 1, total)} מתוך ${total}${friend.online ? '' : ' (לא מחובר כרגע)'}`;
+  return (
+    <p role="status" aria-live="polite" className="mt-1 flex items-center justify-center gap-2 rounded-full bg-white/70 px-3 py-1.5 text-center text-xs shadow-sm">
+      <span className={`inline-block h-2 w-2 rounded-full ${dot}`} aria-hidden />
+      {label}
     </p>
   );
 }
@@ -381,23 +429,31 @@ function RoundButtons({ onRound, busy, quiet = false }: { onRound: (k: 'widen' |
   );
 }
 
-function shortlistCopy(n: number, kind: ShortlistKind | 'direct' | 'fallback' | null): { title: string; text?: string } {
+function shortlistCopy(n: number, kind: ShortlistKind | 'direct' | 'fallback' | null, group: boolean): { title: string; text?: string } {
   if (kind === 'compromise') {
     return { title: n === 1 ? 'הולכים לאכול ב… 🎉' : `נשארו ${n} מקומות`, text: 'לא בחרתם את אותם מקומות, אז אלה שקיבלו הכי הרבה קולות.' };
   }
   if (kind === 'solo') {
     return {
       title: n === 1 ? 'הולכים לאכול ב… 🎉' : `הנה ${n} המקומות`,
-      text: 'החבר לא היה פה לבחירה, אז נשארנו עם מה שאתם בחרתם.',
+      text: group ? 'השאר לא הצביעו, אז נשארנו עם מה שנבחר.' : 'החבר לא היה פה לבחירה, אז נשארנו עם מה שאתם בחרתם.',
     };
   }
   if (kind === 'fallback') {
-    return { title: `הנה ${n} מקומות`, text: 'לא הצלחנו לשמור את הבחירה, אז אלה הראשונים ששניכם אהבתם.' };
+    return {
+      title: `הנה ${n} מקומות`,
+      text: group
+        ? 'לא הצלחנו לשמור את הבחירה, אז אלה הראשונים שרוב הקבוצה אהבה.'
+        : 'לא הצלחנו לשמור את הבחירה, אז אלה הראשונים ששניכם אהבתם.',
+    };
   }
   if (kind === 'agreement') {
-    return { title: n === 1 ? 'הולכים לאכול ב… 🎉' : `הנה ${n} המקומות ששניכם בחרתם` };
+    return { title: n === 1 ? 'הולכים לאכול ב… 🎉' : group ? `הנה ${n} המקומות שרוב הקבוצה בחרה` : `הנה ${n} המקומות ששניכם בחרתם` };
   }
-  return { title: n === 1 ? 'הולכים לאכול ב… 🎉' : `הנה ${n} המקומות ששניכם אוהבים`, text: n > 1 ? 'אפשר ללכת לכל אחד מהם.' : undefined };
+  return {
+    title: n === 1 ? 'הולכים לאכול ב… 🎉' : group ? `הנה ${n} המקומות שרוב הקבוצה אוהבת` : `הנה ${n} המקומות ששניכם אוהבים`,
+    text: n > 1 ? 'אפשר ללכת לכל אחד מהם.' : undefined,
+  };
 }
 
 function MatchList({ matches, source }: { matches: DeckCard[]; source: RestaurantData['source'] }) {
@@ -442,6 +498,7 @@ function NarrowVote({
   mutuals,
   source,
   reason,
+  group,
   waitingIds,
   pendingFriends,
   friendAway,
@@ -456,6 +513,7 @@ function NarrowVote({
   mutuals: DeckCard[];
   source: RestaurantData['source'];
   reason: 'target' | 'stopped';
+  group: boolean;
   waitingIds: string[] | null;
   pendingFriends: number;
   friendAway: boolean;
@@ -495,7 +553,7 @@ function NarrowVote({
       <h1 className="text-center text-3xl font-extrabold">בואו נצמצם 🎯</h1>
       <p className="mt-1 text-center text-ink-soft">
         {reason === 'target'
-          ? `יש ${mutuals.length} מקומות ששניכם אוהבים. כל אחד בוחר עד ${PICK_CAP}.`
+          ? `יש ${mutuals.length} מקומות ש${group ? 'רוב הקבוצה אוהבת' : 'שניכם אוהבים'}. כל אחד בוחר עד ${PICK_CAP}.`
           : `סיימתם להחליק עם ${mutuals.length} מקומות ביחד. כל אחד בוחר עד ${PICK_CAP}.`}
       </p>
       {waiting ? (

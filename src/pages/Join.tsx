@@ -19,7 +19,7 @@ export default function Join() {
       >
         <div className="text-center text-5xl" aria-hidden>🔑</div>
         <h1 className="mt-3 text-center text-3xl font-extrabold">הצטרפות לחדר</h1>
-        <p className="mt-1 text-center text-ink-soft">הקלידו את הקוד שקיבלתם מחבר</p>
+        <p className="mt-1 text-center text-ink-soft">הקלידו את הקוד שקיבלתם מהקבוצה</p>
         <label htmlFor="code" className="sr-only">קוד חדר</label>
         <input
           id="code"
