@@ -6,7 +6,7 @@ import { useFlow } from '../state/flow';
 
 const OPTIONS: { mode: M; emoji: string; title: string; text: string }[] = [
   { mode: 'solo', emoji: '🙋', title: 'לבד', text: 'מחליקים, ובסוף בוחרים מנצח בדו-קרב קצר' },
-  { mode: 'friend', emoji: '👯', title: 'עם חברים', text: 'עד 6 באותו קישור. מחליקים במקביל, ומצמצמים ל-1–3 מקומות שרוב הקבוצה אהבה' },
+  { mode: 'friend', emoji: '👯', title: 'עם חברים', text: 'עד 6 באותו קישור. מחליקים במקביל, ובסוף בוחרים מסעדה אחת מנצחת' },
 ];
 
 export default function Mode() {

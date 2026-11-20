@@ -1,28 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { NavButtons, ShareButton } from '../components/Actions';
+import { ShareButton } from '../components/Actions';
 import { celebrate } from '../components/confetti';
 import { useConfirm, useDialogFocus } from '../components/Dialog';
 import { EmptyState } from '../components/EmptyState';
 import { FinalCard } from '../components/Final';
 import { IconCopy, IconWhatsApp } from '../components/Icons';
 import { Rating, Tags } from '../components/Meta';
-import { PrimaryPhoto, TappablePhoto } from '../components/Photo';
+import { PrimaryPhoto } from '../components/Photo';
 import { Screen, TopBar } from '../components/Screen';
 import { SwipeButtons, SwipeDeck, useSwipeKeys, type Dir, type SwipeDeckHandle } from '../components/SwipeDeck';
 import { track } from '../lib/analytics';
 import { isValidCode, normalizeCode } from '../lib/backend';
 import { CUISINES } from '../lib/cuisines';
-import { cleanAddress } from '../lib/format';
 import { formatDistance } from '../lib/geo';
-import { PICK_CAP, type ShortlistKind } from '../lib/narrow';
+import { PICK_CAP, type FinalOutcomeKind } from '../lib/narrow';
 import type { DeckCard, RestaurantData, Settings } from '../lib/types';
 import { useRestaurants } from '../state/data';
 import { useFriendSession } from '../state/friend';
 import { DemoBadge, Loading } from './shared';
 
 function inviteText(code: string, url: string) {
-  return `בואו נחליט איפה אוכלים! 🍕🍣🍔\nמחליקים על מסעדות, ואז מצמצמים ביחד לכמה מקומות.\nהקוד שלנו: ${code}\n${url}`;
+  return `בואו נחליט איפה אוכלים! 🍕🍣🍔\nמחליקים על מסעדות, ובסוף בוחרים ביחד מנצח אחד.\nהקוד שלנו: ${code}\n${url}`;
 }
 
 function settingsSummary(s: Settings) {
@@ -76,15 +75,7 @@ export default function Friend() {
   const swiping = fs.ready && started && fs.phase.kind === 'swipe' && fs.myProgress < fs.deck.length;
   useSwipeKeys(swiping, swipeBtn, undo);
 
-  const finalIds =
-    fs.fallbackIds ??
-    (fs.phase.kind === 'final' ? fs.phase.ids : fs.phase.kind === 'narrow' && fs.resolution?.status === 'ready' ? fs.resolution.ids : null);
-  const finalKind: ShortlistKind | 'direct' | 'fallback' | null = fs.fallbackIds
-    ? 'fallback'
-    : fs.phase.kind === 'final'
-      ? 'direct'
-      : (fs.resolution?.kind ?? null);
-  const celebrateKey = started && finalIds ? finalIds.join(',') : '';
+  const celebrateKey = started && fs.decision.stage === 'winner' ? fs.decision.winnerId : '';
   useEffect(() => {
     if (celebrateKey) celebrate();
   }, [celebrateKey]);
@@ -241,6 +232,7 @@ export default function Friend() {
           },
     );
     if (!confirmed) return;
+    setShowMatches(false);
     setBusyRound(true);
     const ok = await fs.newRound(k);
     setBusyRound(false);
@@ -302,36 +294,49 @@ export default function Friend() {
     );
   }
 
-  // ── 1–3 places, or a finished re-vote ──
-  // Only cards we can actually show count, so a stale id can never leave a blank screen.
-  const chosen = (finalIds ?? []).map((id) => cards.find((c) => c.id === id)).filter((c): c is DeckCard => Boolean(c));
-  if (chosen.length > 0) {
-    const copy = shortlistCopy(chosen.length, finalKind, group);
-    return (
-      <Screen>
-        {header}
-        <div className="mt-2 text-center">
-          <h1 className="text-3xl font-extrabold">{copy.title}</h1>
-          {copy.text && <p className="mt-1 text-ink-soft">{copy.text}</p>}
-        </div>
-        {chosen.length === 1 ? (
+  // ── Single winning restaurant ──
+  if (fs.decision.stage === 'winner') {
+    const d = fs.decision;
+    const winner = cards.find((c) => c.id === d.winnerId);
+    if (winner) {
+      const tiedNames = d.tiedIds
+        .map((id) => cards.find((c) => c.id === id)?.name)
+        .filter((name): name is string => Boolean(name));
+      const copy = winnerCopy(d.kind, tiedNames, group);
+      const otherMatches = cards.filter((c) => c.id !== winner.id);
+      return (
+        <Screen>
+          {header}
+          <div className="mt-2 text-center">
+            <h1 className="text-3xl font-extrabold">{copy.title}</h1>
+            {copy.text && <p className="mt-1 text-ink-soft">{copy.text}</p>}
+          </div>
           <div className="mt-4">
             <FinalCard
-              r={chosen[0]}
+              r={winner}
               source={data.source}
-              context="friend_shortlist"
-              shareText={`החלטנו! אוכלים היום ב${chosen[0].name} 😋 גם אתם מתלבטים? נסו את "מה אוכלים היום":`}
+              context="friend_winner"
+              shareText={`החלטנו! אוכלים היום ב${winner.name} 😋 גם אתם מתלבטים? נסו את "מה אוכלים היום":`}
             />
           </div>
-        ) : (
-          <Shortlist matches={chosen} source={data.source} />
-        )}
-        <div className="mt-4 flex flex-col gap-3">
-          {fs.canResume && <button className="btn-secondary" onClick={fs.resumeSwiping}>ממשיכים להחליק</button>}
-          <RoundButtons busy={busyRound} quiet onRound={runRound} />
-        </div>
-      </Screen>
-    );
+          <div className="mt-4 flex flex-col gap-3">
+            {otherMatches.length > 0 && (
+              <button className="btn-secondary" onClick={() => setShowMatches(true)}>
+                צפייה בעוד {otherMatches.length} מקומות שהתאימו
+              </button>
+            )}
+            {fs.canResume && <button className="btn-secondary" onClick={fs.resumeSwiping}>ממשיכים להחליק</button>}
+            <RoundButtons busy={busyRound} quiet onRound={runRound} />
+          </div>
+          {showMatches && (
+            <Sheet onClose={() => setShowMatches(false)} title={group ? 'עוד מקומות שרוב הקבוצה אהבה' : 'עוד מקומות ששניכם אהבתם'}>
+              <p className="mt-2 text-sm text-ink-soft">אלה שאר המקומות שנכנסו לרשימה המשותפת לפני הבחירה הסופית.</p>
+              <MatchList matches={otherMatches} source={data.source} />
+            </Sheet>
+          )}
+        </Screen>
+      );
+    }
   }
 
   if (fs.phase.kind === 'holding') {
@@ -343,8 +348,8 @@ export default function Friend() {
           <h1 className="text-3xl font-extrabold">{held.length === 1 ? 'יש כבר מקום אחד' : `יש כבר ${held.length} מקומות`}</h1>
           <p className="mt-1 text-ink-soft">
             {group
-              ? `${fs.room.finished} מתוך ${fs.room.count} סיימו. מצמצמים כשכולם מסיימים להחליק.`
-              : 'החבר עוד מחליק. מצמצמים כששניכם מסיימים.'}
+              ? `${fs.room.finished} מתוך ${fs.room.count} סיימו. בוחרים מנצח כשכולם מסיימים להחליק.`
+              : 'החבר עוד מחליק. בוחרים מנצח כששניכם מסיימים.'}
           </p>
         </div>
         <MatchList matches={held} source={data.source} />
@@ -358,24 +363,37 @@ export default function Friend() {
     );
   }
 
-  // ── Re-vote among the shared likes ──
-  if (fs.phase.kind === 'narrow') {
+  // ── Narrowing (4+ mutuals: pick up to 3) or Final vote (2–6 finalists: pick 1) ──
+  if (fs.decision.stage === 'narrow' || fs.decision.stage === 'final_vote') {
+    const isFinalVote = fs.decision.stage === 'final_vote';
+    const stageCandidates = fs.decision.candidates;
+    const waitingIds =
+      fs.decision.stage === 'final_vote'
+        ? fs.decision.resolution.status === 'waiting' && fs.decision.resolution.myPick
+          ? [fs.decision.resolution.myPick]
+          : null
+        : fs.decision.resolution.status === 'waiting'
+          ? fs.decision.resolution.ids
+          : null;
     return (
       <Screen>
         {header}
         <NarrowVote
-          mutuals={cards.filter((c) => fs.phase.kind === 'narrow' && fs.phase.ids.includes(c.id))}
+          key={`${fs.session.round}:${fs.decision.stage}`}
+          stage={fs.decision.stage}
+          cap={isFinalVote ? 1 : PICK_CAP}
+          mutuals={cards.filter((c) => stageCandidates.includes(c.id))}
           source={data.source}
           group={group}
-          waitingIds={fs.resolution?.status === 'waiting' ? fs.resolution.ids : null}
+          waitingIds={waitingIds}
           pendingFriends={fs.pendingFriends}
           friendAway={fs.friendAway}
           canDecideWithout={fs.canDecideWithout}
           hasFriend={Boolean(fs.friend)}
-          draftKey={`mo:pick-draft:${code}:${fs.session.round}`}
+          draftKey={`mo:pick-draft:${code}:${fs.session.round}:${fs.decision.stage}`}
           saving={fs.savingPicks}
           pickError={fs.pickError}
-          onSubmit={fs.submitPicks}
+          onSubmit={isFinalVote ? fs.submitFinalPick : fs.submitPicks}
           onAlone={fs.continueAlone}
           onFallback={fs.useFallback}
         />
@@ -423,7 +441,7 @@ export default function Friend() {
 
       {showMatches && (
         <Sheet onClose={() => setShowMatches(false)} title={group ? 'מקומות שרוב הקבוצה אוהבת' : 'מקומות ששניכם אוהבים'}>
-          <p className="mt-2 text-sm text-ink-soft">זה עדיין לא הסוף. ממשיכים להחליק, וכשתרצו — סיימתי, ומצמצמים ל-1–3.</p>
+          <p className="mt-2 text-sm text-ink-soft">זה עדיין לא הסוף. ממשיכים להחליק, וכשתרצו — סיימתי, ובוחרים מנצח אחד.</p>
           <MatchList matches={fs.matches} source={data.source} />
         </Sheet>
       )}
@@ -492,36 +510,50 @@ function RoundButtons({ onRound, busy, quiet = false }: { onRound: (k: 'widen' |
   );
 }
 
-function shortlistCopy(n: number, kind: ShortlistKind | 'direct' | 'fallback' | null, group: boolean): { title: string; text?: string } {
-  if (kind === 'compromise') {
+function joinHebrewNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  if (names.length === 2) return `${names[0]} ל-${names[1]}`;
+  return `${names.slice(0, -1).join(', ')} ו-${names[names.length - 1]}`;
+}
+
+function winnerCopy(kind: FinalOutcomeKind, tiedNames: string[], group: boolean): { title: string; text?: string } {
+  const title = 'הולכים לאכול ב… 🎉';
+  if (kind === 'tiebreak') {
+    const who =
+      tiedNames.length >= 2 && tiedNames.length <= 3
+        ? `בין ${joinHebrewNames(tiedNames)}`
+        : `בין ${tiedNames.length} מקומות`;
     return {
-      title: n === 1 ? 'הולכים לאכול ב… 🎉' : `נשארו ${n} מקומות`,
-      text:
-        n > 3
-          ? 'לא בחרתם את אותם מקומות והיה תיקו, אז כל המקומות שקיבלו הכי הרבה קולות נשארו.'
-          : 'לא בחרתם את אותם מקומות, אז אלה שקיבלו הכי הרבה קולות.',
+      title,
+      text: `היה תיקו ${who} — ההגרלה הכריעה בצורה הוגנת 🎲`,
     };
+  }
+  if (kind === 'vote') {
+    return { title, text: 'נבחר ברוב קולות בסיבוב הסופי!' };
+  }
+  if (kind === 'compromise') {
+    return { title, text: 'המקום שקיבל הכי הרבה קולות.' };
+  }
+  if (kind === 'agreement') {
+    return { title, text: group ? 'המקום היחיד שרוב הקבוצה בחרה.' : 'המקום היחיד ששניכם בחרתם.' };
   }
   if (kind === 'solo') {
     return {
-      title: n === 1 ? 'הולכים לאכול ב… 🎉' : `הנה ${n} המקומות`,
-      text: group ? 'השאר לא הצביעו, אז נשארנו עם מה שנבחר.' : 'החבר לא היה פה לבחירה, אז נשארנו עם מה שאתם בחרתם.',
+      title,
+      text: group ? 'השאר לא הצביעו, אז נשארנו עם הבחירה שלך.' : 'החבר לא היה פה לבחירה, אז נשארנו עם הבחירה שלך.',
     };
   }
   if (kind === 'fallback') {
     return {
-      title: `הנה ${n} מקומות`,
+      title,
       text: group
-        ? 'לא הצלחנו לשמור את הבחירה, אז אלה שקיבלו הכי הרבה תמיכה בקבוצה.'
-        : 'לא הצלחנו לשמור את הבחירה, אז אלה המובילים מבין המקומות ששניכם אהבתם.',
+        ? 'לא הצלחנו לשמור את הבחירה, אז זה המקום שקיבל הכי הרבה תמיכה בקבוצה.'
+        : 'לא הצלחנו לשמור את הבחירה, אז זה המקום המוביל מבין ההתאמות.',
     };
   }
-  if (kind === 'agreement') {
-    return { title: n === 1 ? 'הולכים לאכול ב… 🎉' : group ? `הנה ${n} המקומות שרוב הקבוצה בחרה` : `הנה ${n} המקומות ששניכם בחרתם` };
-  }
   return {
-    title: n === 1 ? 'הולכים לאכול ב… 🎉' : group ? `הנה ${n} המקומות שרוב הקבוצה אוהבת` : `הנה ${n} המקומות ששניכם אוהבים`,
-    text: n > 1 ? 'אפשר ללכת לכל אחד מהם.' : undefined,
+    title,
+    text: group ? 'המקום היחיד שרוב הקבוצה אהבה.' : 'המקום היחיד ששניכם אהבתם.',
   };
 }
 
@@ -544,26 +576,9 @@ function MatchList({ matches, source }: { matches: DeckCard[]; source: Restauran
   );
 }
 
-function Shortlist({ matches, source }: { matches: DeckCard[]; source: RestaurantData['source'] }) {
-  return (
-    <ul className="mt-4 flex flex-col gap-4">
-      {matches.map((m) => (
-        <li key={m.id} className="card overflow-hidden">
-          <TappablePhoto restaurant={m} source={source} cuisine={m.cuisine} alt={m.name} className="h-40 w-full" eager />
-          <div className="p-4">
-            <h2 className="text-xl font-bold leading-tight">{m.name}</h2>
-            <div className="mt-1"><Rating r={m} /></div>
-            {cleanAddress(m.address) && <p className="mt-1 text-sm text-ink-soft">📍 {cleanAddress(m.address)}</p>}
-            <div className="mt-2"><Tags r={m} /></div>
-            <div className="mt-4"><NavButtons r={m} context="friend_shortlist" /></div>
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function NarrowVote({
+  stage,
+  cap,
   mutuals,
   source,
   group,
@@ -579,6 +594,8 @@ function NarrowVote({
   onAlone,
   onFallback,
 }: {
+  stage: 'narrow' | 'final_vote';
+  cap: number;
   mutuals: DeckCard[];
   source: RestaurantData['source'];
   group: boolean;
@@ -611,23 +628,32 @@ function NarrowVote({
   }, [draftKey, selected]);
   const waiting = waitingIds !== null;
   // A saved draft can hold places that are no longer on the list (undo, a new
-  // like, an earlier narrowing). Never let those invisible ids use up the 3 picks.
+  // like, an earlier narrowing). Never let those invisible ids use up the picks.
   const visible = new Set(mutuals.map((m) => m.id));
-  const picked = selected.filter((id) => visible.has(id)).slice(0, PICK_CAP);
+  const picked = selected.filter((id) => visible.has(id)).slice(0, cap);
   const toggle = (id: string) => {
     setSelected((prev) => {
       const cur = prev.filter((x) => visible.has(x));
+      if (cap === 1) return cur.includes(id) ? [] : [id];
       if (cur.includes(id)) return cur.filter((x) => x !== id);
-      if (cur.length >= PICK_CAP) return cur;
+      if (cur.length >= cap) return cur;
       return [...cur, id];
     });
   };
+  const isFinal = stage === 'final_vote';
+  const title = isFinal
+    ? (mutuals.length === 2 ? 'ראש בראש! מי מנצח? 🥊' : 'הסיבוב האחרון! 🏆')
+    : 'בואו נצמצם 🎯';
+  const subtitle = isFinal
+    ? (mutuals.length === 2
+      ? 'נשארו 2 מקומות. כל אחד בוחר את המנצח שלו — ואם יהיה תיקו, ההגרלה תכריע.'
+      : `נשארו ${mutuals.length} מקומות. כל אחד בוחר מקום אחד — ואם יהיה תיקו, ההגרלה תכריע.`)
+    : `סיימתם להחליק עם ${mutuals.length} מקומות ש${group ? 'רוב הקבוצה אוהבת' : 'שניכם אוהבים'}. כל אחד בוחר עד ${cap}.`;
+
   return (
     <div className="mt-2 flex flex-1 flex-col">
-      <h1 className="text-center text-3xl font-extrabold">בואו נצמצם 🎯</h1>
-      <p className="mt-1 text-center text-ink-soft">
-        {`סיימתם להחליק עם ${mutuals.length} מקומות ש${group ? 'רוב הקבוצה אוהבת' : 'שניכם אוהבים'}. כל אחד בוחר עד ${PICK_CAP}.`}
-      </p>
+      <h1 className="text-center text-3xl font-extrabold">{title}</h1>
+      <p className="mt-1 text-center text-ink-soft">{subtitle}</p>
       {waiting ? (
         <div className="mt-6">
           <p className="text-center text-lg font-bold" role="status">
@@ -643,7 +669,7 @@ function NarrowVote({
         <ul className="mt-4 flex flex-col gap-3">
           {mutuals.map((m) => {
             const on = picked.includes(m.id);
-            const full = !on && picked.length >= PICK_CAP;
+            const full = cap > 1 && !on && picked.length >= cap;
             return (
               <li key={m.id}>
                 <button
@@ -668,12 +694,16 @@ function NarrowVote({
         </ul>
       )}
       <p className="mt-3 text-center text-sm text-ink-soft" aria-live="polite">
-        {waiting ? 'הבחירה שלכם נשמרה' : `נבחרו ${picked.length} מתוך ${PICK_CAP}`}
+        {waiting
+          ? 'הבחירה שלכם נשמרה'
+          : cap === 1
+            ? (picked.length === 1 ? 'נבחר מקום אחד' : 'בחרו מקום אחד')
+            : `נבחרו ${picked.length} מתוך ${cap}`}
       </p>
       {friendAway && hasFriend && (
         <p className="mt-1 text-center text-sm text-ink-soft">החבר לא נראה כבר כמה דקות.</p>
       )}
-      {pickError && <p className="mt-2 text-center text-sm text-tomato-dark" role="alert">לא הצלחנו לשמור את הבחירה. נסו שוב, או קחו את המקומות המובילים.</p>}
+      {pickError && <p className="mt-2 text-center text-sm text-tomato-dark" role="alert">לא הצלחנו לשמור את הבחירה. נסו שוב, או קחו את המקום המוביל.</p>}
       <div className="mt-auto flex flex-col gap-3 pt-4">
         {!waiting && (
           <button className="btn-primary" disabled={picked.length === 0 || saving} onClick={() => onSubmit(picked)}>
@@ -683,7 +713,7 @@ function NarrowVote({
         {canDecideWithout && pendingFriends > 0 && (
           <button className="btn-secondary" onClick={onAlone}>{group ? 'ממשיכים בלי מי שלא מחובר' : 'נבחר בלעדיו'}</button>
         )}
-        {pickError && <button className="btn-secondary" onClick={onFallback}>להציג את 3 המקומות המובילים</button>}
+        {pickError && <button className="btn-secondary" onClick={onFallback}>להציג את המקום המוביל</button>}
       </div>
     </div>
   );
@@ -720,8 +750,8 @@ function Sheet({ title, children, onClose }: { title: string; children: React.Re
  */
 export function lobbyRuleText(activeCount: number): string {
   return activeCount >= 3
-    ? 'מקום נכנס לרשימה כשרוב מי שמשתתף אהב אותו, ואז מצמצמים ל-1–3. אפשר להיות עד 6 בחדר.'
-    : 'מקום נכנס לרשימה כשרוב המשתתפים אהבו אותו (בזוג: שניכם), ואז מצמצמים ל-1–3. אפשר להיות עד 6 בחדר.';
+    ? 'מקום נכנס לרשימה כשרוב מי שמשתתף אהב אותו, ובסוף בוחרים מנצח אחד. אפשר להיות עד 6 בחדר.'
+    : 'מקום נכנס לרשימה כשרוב המשתתפים אהבו אותו (בזוג: שניכם), ובסוף בוחרים מנצח אחד. אפשר להיות עד 6 בחדר.';
 }
 
 export function roundNoticeText(kind: 'restart' | 'widen', group: boolean): string {

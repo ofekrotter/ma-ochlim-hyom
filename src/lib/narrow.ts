@@ -144,19 +144,20 @@ export function friendPhase(input: PhaseInput): FriendPhase {
   return { kind: 'narrow', ids };
 }
 
-/** Keep only real mutuals, in deck order, capped at PICK_CAP. */
-export function sanitizePicks(mutualIds: string[], picks: string[]): string[] {
+/** Keep only real mutuals, in deck order, capped at `cap` (default PICK_CAP). */
+export function sanitizePicks(mutualIds: string[], picks: string[], cap = PICK_CAP): string[] {
   const order = new Map(uniqueIds(mutualIds).map((id, i) => [id, i]));
   return [...new Set(picks)]
     .filter((id) => order.has(id))
     .sort((a, b) => order.get(a)! - order.get(b)!)
-    .slice(0, PICK_CAP);
+    .slice(0, Math.max(1, Math.floor(cap)));
 }
 
 export function votesFromLikes(
   likes: { member_id: string; round: number; place_id: string }[],
   voteRound: number,
   mutualIds: string[],
+  cap = PICK_CAP,
 ): Map<string, string[]> {
   const grouped = new Map<string, string[]>();
   for (const like of likes) {
@@ -167,7 +168,7 @@ export function votesFromLikes(
   }
   const out = new Map<string, string[]>();
   for (const [memberId, picks] of grouped) {
-    const clean = sanitizePicks(mutualIds, picks);
+    const clean = sanitizePicks(mutualIds, picks, cap);
     if (clean.length) out.set(memberId, clean);
   }
   return out;
@@ -366,4 +367,191 @@ export type RoundNotice = 'restart' | 'widen';
 /** What changed when the round number went up: a wider radius, or a reshuffle. */
 export function roundChangeNotice(prev: { round: number; radius: number }, next: { round: number; radius: number }): RoundNotice {
   return next.radius > prev.radius ? 'widen' : 'restart';
+}
+
+export const FINAL_VOTE_BALLOT = 2;
+
+export type FinalOutcomeKind = 'direct' | 'agreement' | 'compromise' | 'vote' | 'tiebreak' | 'solo' | 'fallback';
+
+export interface FinalVoteResolution {
+  status: VoteStatus;
+  candidates: string[];
+  myPick: string | null;
+  winnerId: string | null;
+  tiedIds: string[];
+  kind: 'vote' | 'tiebreak' | 'solo' | null;
+}
+
+export type FriendDecision =
+  | { stage: 'none' }
+  | { stage: 'narrow'; candidates: string[]; resolution: VoteResolution }
+  | { stage: 'final_vote'; candidates: string[]; resolution: FinalVoteResolution }
+  | { stage: 'winner'; winnerId: string; kind: FinalOutcomeKind; tiedIds: string[]; finalists: string[] };
+
+/**
+ * Deterministic, fair tie-breaker seeded by the room and round.
+ * Independent of candidate order, deck order, or who voted first.
+ */
+export function pickWinnerFromTie(ids: readonly string[], seed: string): string | null {
+  const unique = uniqueIds([...ids]);
+  if (unique.length === 0) return null;
+  if (unique.length === 1) return unique[0];
+  const sorted = [...unique].sort(
+    (a, b) =>
+      stableHash(`${seed}:final:${a}`) - stableHash(`${seed}:final:${b}`) ||
+      (a < b ? -1 : a > b ? 1 : 0),
+  );
+  return sorted[0];
+}
+
+/**
+ * Final 1-pick vote among 2+ finalists. Once all required voters have chosen
+ * their 1 favorite, the top vote-getter wins; any tie for first place is broken
+ * deterministically using the room seed so every member sees the exact same winner.
+ */
+export function resolveFinalVote(
+  candidates: readonly string[],
+  voters: readonly Voter[],
+  selfId: string,
+  opts: { seed?: string } = {},
+): FinalVoteResolution {
+  const list = uniqueIds([...candidates]);
+  if (list.length === 0) {
+    return { status: 'ready', candidates: [], myPick: null, winnerId: null, tiedIds: [], kind: null };
+  }
+  const order = new Map(list.map((id, i) => [id, i]));
+  const normOne = (picks: string[] | null): string | null => {
+    if (!picks) return null;
+    const clean = sanitizePicks(list, picks, 1);
+    return clean[0] ?? null;
+  };
+
+  const myPick = normOne(voters.find((v) => v.memberId === selfId)?.picks ?? null);
+  if (!myPick) {
+    return { status: 'picking', candidates: list, myPick: null, winnerId: null, tiedIds: [], kind: null };
+  }
+
+  const waitingOn = voters.some((v) => v.required && v.memberId !== selfId && !normOne(v.picks));
+  if (waitingOn) {
+    return { status: 'waiting', candidates: list, myPick, winnerId: null, tiedIds: [], kind: null };
+  }
+
+  const ballots = voters.map((v) => normOne(v.picks)).filter((p): p is string => Boolean(p));
+  if (ballots.length <= 1) {
+    return { status: 'ready', candidates: list, myPick, winnerId: myPick, tiedIds: [], kind: 'solo' };
+  }
+
+  const counts = new Map<string, number>(list.map((id) => [id, 0]));
+  for (const id of ballots) counts.set(id, (counts.get(id) ?? 0) + 1);
+
+  const maxVotes = Math.max(...counts.values());
+  const top = list
+    .filter((id) => (counts.get(id) ?? 0) === maxVotes)
+    .sort((a, b) => order.get(a)! - order.get(b)!);
+
+  if (top.length === 1) {
+    return { status: 'ready', candidates: list, myPick, winnerId: top[0], tiedIds: [], kind: 'vote' };
+  }
+
+  const winnerId = pickWinnerFromTie(top, opts.seed ?? '');
+  return { status: 'ready', candidates: list, myPick, winnerId, tiedIds: top, kind: 'tiebreak' };
+}
+
+/**
+ * Drives a finished friend room all the way to ONE single winning restaurant:
+ * - 1 mutual match → immediate winner
+ * - 2–3 mutual matches → final 1-pick vote (with deterministic tie-break if tied)
+ * - 4+ mutual matches → Stage 1 narrow (up to 3 picks); if 1 survives → winner;
+ *   if 2+ finalists remain → Stage 2 final 1-pick vote (with tie-break if tied).
+ */
+export function resolveFriendDecision(args: {
+  phase: FriendPhase;
+  narrowVoters: readonly Voter[];
+  finalVoters: readonly Voter[];
+  selfId: string;
+  likeCounts?: ReadonlyMap<string, number>;
+  seed?: string;
+  fallbackWinnerId?: string | null;
+}): FriendDecision {
+  const { phase, narrowVoters, finalVoters, selfId, likeCounts, seed = '', fallbackWinnerId } = args;
+  if (phase.kind !== 'final' && phase.kind !== 'narrow') {
+    return { stage: 'none' };
+  }
+
+  if (fallbackWinnerId && phase.ids.includes(fallbackWinnerId)) {
+    return { stage: 'winner', winnerId: fallbackWinnerId, kind: 'fallback', tiedIds: [], finalists: phase.ids };
+  }
+
+  if (phase.kind === 'final') {
+    if (phase.ids.length === 0) return { stage: 'none' };
+    if (phase.ids.length === 1) {
+      return { stage: 'winner', winnerId: phase.ids[0], kind: 'direct', tiedIds: [], finalists: phase.ids };
+    }
+    const finalRes = resolveFinalVote(phase.ids, finalVoters, selfId, { seed });
+    if (finalRes.status === 'ready' && finalRes.winnerId) {
+      return {
+        stage: 'winner',
+        winnerId: finalRes.winnerId,
+        kind: finalRes.kind ?? 'vote',
+        tiedIds: finalRes.tiedIds,
+        finalists: phase.ids,
+      };
+    }
+    return { stage: 'final_vote', candidates: phase.ids, resolution: finalRes };
+  }
+
+  const res1 = resolveVotes(phase.ids, [...narrowVoters], selfId, { likeCounts, seed });
+  if (res1.status !== 'ready') {
+    return { stage: 'narrow', candidates: phase.ids, resolution: res1 };
+  }
+  if (res1.ids.length === 1) {
+    return {
+      stage: 'winner',
+      winnerId: res1.ids[0],
+      kind: res1.kind ?? 'agreement',
+      tiedIds: [],
+      finalists: phase.ids,
+    };
+  }
+  if (res1.ids.length === 0) {
+    return { stage: 'narrow', candidates: phase.ids, resolution: res1 };
+  }
+
+  const finalRes = resolveFinalVote(res1.ids, finalVoters, selfId, { seed });
+  if (finalRes.status === 'ready' && finalRes.winnerId) {
+    return {
+      stage: 'winner',
+      winnerId: finalRes.winnerId,
+      kind: finalRes.kind ?? 'vote',
+      tiedIds: finalRes.tiedIds,
+      finalists: res1.ids,
+    };
+  }
+  return { stage: 'final_vote', candidates: res1.ids, resolution: finalRes };
+}
+
+/**
+ * Used when vote rows cannot be saved: picks the single highest-supported
+ * candidate (votes that landed, then swipe likes, then deterministic room hash).
+ */
+export function fallbackWinner(
+  candidates: string[],
+  likeCounts?: ReadonlyMap<string, number>,
+  votes?: ReadonlyMap<string, readonly string[]>,
+  seed = '',
+): string | null {
+  const list = uniqueIds(candidates);
+  if (list.length === 0) return null;
+  const voteCount = new Map<string, number>();
+  for (const ballot of votes?.values() ?? []) {
+    for (const id of new Set(ballot)) voteCount.set(id, (voteCount.get(id) ?? 0) + 1);
+  }
+  const ranked = [...list].sort(
+    (a, b) =>
+      (voteCount.get(b) ?? 0) - (voteCount.get(a) ?? 0) ||
+      (likeCounts?.get(b) ?? 0) - (likeCounts?.get(a) ?? 0) ||
+      stableHash(`${seed}:fallback:${a}`) - stableHash(`${seed}:fallback:${b}`) ||
+      (a < b ? -1 : a > b ? 1 : 0),
+  );
+  return ranked[0] ?? null;
 }

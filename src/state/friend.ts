@@ -4,16 +4,19 @@ import { backend, type SessionState } from '../lib/backend';
 import { RADIUS_MAX } from '../lib/config';
 import { buildDeck, deckFromIds } from '../lib/data';
 import {
+  FINAL_VOTE_BALLOT,
   activeMemberIds,
   canDecideWithout,
   candidatePlaceIds,
-  fallbackShortlist,
+  fallbackWinner,
   friendPhase,
   memberIsAway,
   narrowVoteRound,
+  resolveFriendDecision,
   resolveVotes,
   sanitizePicks,
   syncPlan,
+  uniqueIds,
   votersForDecision,
   votesFromLikes,
   roundChangeNotice,
@@ -90,11 +93,14 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
   const [history, setHistory] = useState<{ id: string; dir: Dir }[]>([]);
   // null = follow the server's finished flag. true/false are this tab's choice.
   const [stoppedEarly, setStoppedEarly] = useState<boolean | null>(null);
-  const [localPicks, setLocalPicks] = useState<string[] | null>(null);
+  const [localPicks, setLocalPicks] = useState<{ narrow: string[] | null; final: string[] | null }>({
+    narrow: null,
+    final: null,
+  });
   const [decideAlone, setDecideAlone] = useState(false);
   const [pickError, setPickError] = useState(false);
   const [savingPicks, setSavingPicks] = useState(false);
-  const [fallbackIds, setFallbackIds] = useState<string[] | null>(null);
+  const [fallbackWinnerId, setFallbackWinnerId] = useState<string | null>(null);
   // I explicitly chose not to wait for members who went offline mid-deck.
   const [skipOffline, setSkipOffline] = useState(false);
   const joined = useRef(false);
@@ -271,10 +277,10 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     setMine({ round, progress, likes: myLikes });
     setHistory([]);
     setStoppedEarly(null);
-    setLocalPicks(null);
+    setLocalPicks({ narrow: null, final: null });
     setDecideAlone(false);
     setPickError(false);
-    setFallbackIds(null);
+    setFallbackWinnerId(null);
     setSkipOffline(false);
   }, [state, me, mine, round, memberId]);
 
@@ -437,50 +443,97 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     stoppedCount,
   });
 
-  const picksByMember = useMemo(
-    () => votesFromLikes(state?.likes ?? [], narrowVoteRound(round), mutualKey ? mutualKey.split('\0') : []),
-    [state?.likes, round, mutualKey],
-  );
-  const voters = votersForDecision({
-    selfId: memberId,
-    selfPicks: localPicks ?? picksByMember.get(memberId) ?? null,
-    others: activeOthers.map((m) => ({
-      memberId: m.member_id,
-      online: online(m.last_seen),
-      picks: picksByMember.get(m.member_id) ?? null,
-    })),
-    decideAlone,
-  });
-  const decideWithoutOffline =
-    !decideAlone &&
-    canDecideWithout(voters.filter((v) => v.required && v.memberId !== memberId).map((v) => ({
-      online: online(activeOthers.find((m) => m.member_id === v.memberId)?.last_seen ?? ''),
-      picks: v.picks,
-    })));
+  const seed = `${code}:${round}`;
   const swipeLikeCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const l of state?.likes ?? []) if (l.round === round) m.set(l.place_id, (m.get(l.place_id) ?? 0) + 1);
     return m;
   }, [state?.likes, round]);
-  const resolution: VoteResolution | null =
-    phase.kind === 'narrow' && !fallbackIds ? resolveVotes(mutualIds, voters, memberId, { likeCounts: swipeLikeCounts, seed: `${code}:${round}` }) : null;
-  const pendingFriends = voters.filter((v) => v.required && v.memberId !== memberId && !v.picks).length;
+
+  const narrowPicksByMember = useMemo(
+    () => votesFromLikes(state?.likes ?? [], narrowVoteRound(round, 1), mutualKey ? mutualKey.split('\0') : []),
+    [state?.likes, round, mutualKey],
+  );
+  const narrowVoters = votersForDecision({
+    selfId: memberId,
+    selfPicks: localPicks.narrow ?? narrowPicksByMember.get(memberId) ?? null,
+    others: activeOthers.map((m) => ({
+      memberId: m.member_id,
+      online: online(m.last_seen),
+      picks: narrowPicksByMember.get(m.member_id) ?? null,
+    })),
+    decideAlone,
+  });
+  const narrowResolution: VoteResolution | null =
+    phase.kind === 'narrow' ? resolveVotes(mutualIds, narrowVoters, memberId, { likeCounts: swipeLikeCounts, seed }) : null;
+
+  const finalCandidates = useMemo(() => {
+    if (phase.kind === 'final' && phase.ids.length >= 2) return phase.ids;
+    if (phase.kind === 'narrow' && narrowResolution?.status === 'ready' && narrowResolution.ids.length >= 2) {
+      return narrowResolution.ids;
+    }
+    return [] as string[];
+  }, [phase, narrowResolution]);
+  const finalCandidatesKey = finalCandidates.join('\0');
+
+  const finalPicksByMember = useMemo(
+    () => votesFromLikes(state?.likes ?? [], narrowVoteRound(round, FINAL_VOTE_BALLOT), finalCandidatesKey ? finalCandidatesKey.split('\0') : [], 1),
+    [state?.likes, round, finalCandidatesKey],
+  );
+  const finalVoters = votersForDecision({
+    selfId: memberId,
+    selfPicks: localPicks.final ?? finalPicksByMember.get(memberId) ?? null,
+    others: activeOthers.map((m) => ({
+      memberId: m.member_id,
+      online: online(m.last_seen),
+      picks: finalPicksByMember.get(m.member_id) ?? null,
+    })),
+    decideAlone,
+  });
+
+  const decision = resolveFriendDecision({
+    phase,
+    narrowVoters,
+    finalVoters,
+    selfId: memberId,
+    likeCounts: swipeLikeCounts,
+    seed,
+    fallbackWinnerId,
+  });
+
+  const activeVoters =
+    decision.stage === 'final_vote' ? finalVoters : decision.stage === 'narrow' ? narrowVoters : [];
+  const pendingFriends = activeVoters.filter((v) => v.required && v.memberId !== memberId && !v.picks).length;
+  const decideWithoutOffline =
+    !decideAlone &&
+    canDecideWithout(
+      activeVoters
+        .filter((v) => v.required && v.memberId !== memberId)
+        .map((v) => ({
+          online: online(activeOthers.find((m) => m.member_id === v.memberId)?.last_seen ?? ''),
+          picks: v.picks,
+        })),
+    );
 
   const stopSwiping = useCallback(() => {
     if (!mine) return;
-    setFallbackIds(null);
+    setFallbackWinnerId(null);
     setStoppedEarly(true);
     backend.updateMember(code, memberId, { round, progress: mine.progress, finished: true }).catch(writeFailed);
   }, [mine, code, memberId, round, writeFailed]);
 
   const resumeSwiping = useCallback(() => {
     if (!mine || (deck.length > 0 && mine.progress >= deck.length)) return;
-    setFallbackIds(null);
-    setLocalPicks(null);
+    setFallbackWinnerId(null);
+    setLocalPicks({ narrow: null, final: null });
     setDecideAlone(false);
     setStoppedEarly(false);
-    const voteRound = narrowVoteRound(round);
-    Promise.all(mutualIds.map((id) => backend.unlike(code, memberId, voteRound, id))).catch(() => undefined);
+    const narrowRound = narrowVoteRound(round, 1);
+    const finalRound = narrowVoteRound(round, FINAL_VOTE_BALLOT);
+    Promise.all([
+      ...mutualIds.map((id) => backend.unlike(code, memberId, narrowRound, id)),
+      ...mutualIds.map((id) => backend.unlike(code, memberId, finalRound, id)),
+    ]).catch(() => undefined);
     backend.updateMember(code, memberId, { round, progress: mine.progress, finished: false }).catch(writeFailed);
   }, [mine, deck.length, mutualIds, code, memberId, round, writeFailed]);
 
@@ -489,17 +542,17 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
       if (!mine) return;
       const clean = sanitizePicks(mutualIds, ids);
       if (clean.length === 0) return;
-      const voteRound = narrowVoteRound(round);
+      const voteRound = narrowVoteRound(round, 1);
       setSavingPicks(true);
       setPickError(false);
-      setLocalPicks(clean);
+      setLocalPicks((p) => ({ ...p, narrow: clean }));
       try {
         // Replace any earlier vote on this round so a retry doesn't union with a partial save.
         await Promise.all(mutualIds.map((id) => backend.unlike(code, memberId, voteRound, id)));
         await Promise.all(clean.map((id) => backend.like(code, memberId, voteRound, id)));
         await refresh();
       } catch {
-        setLocalPicks(null);
+        setLocalPicks((p) => ({ ...p, narrow: null }));
         setPickError(true);
         setOffline(true);
       } finally {
@@ -509,16 +562,44 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     [mine, mutualIds, round, code, memberId, refresh],
   );
 
+  const submitFinalPick = useCallback(
+    async (ids: string[]) => {
+      if (!mine) return;
+      const clean = sanitizePicks(finalCandidates, ids, 1);
+      if (clean.length === 0) return;
+      const voteRound = narrowVoteRound(round, FINAL_VOTE_BALLOT);
+      setSavingPicks(true);
+      setPickError(false);
+      setLocalPicks((p) => ({ ...p, final: clean }));
+      try {
+        const existingOnServer = (state?.likes ?? [])
+          .filter((l) => l.member_id === memberId && l.round === voteRound)
+          .map((l) => l.place_id);
+        const toClear = uniqueIds([...finalCandidates, ...existingOnServer]);
+        await Promise.all(toClear.map((id) => backend.unlike(code, memberId, voteRound, id)));
+        await backend.like(code, memberId, voteRound, clean[0]);
+        await refresh();
+      } catch {
+        setLocalPicks((p) => ({ ...p, final: null }));
+        setPickError(true);
+        setOffline(true);
+      } finally {
+        setSavingPicks(false);
+      }
+    },
+    [mine, finalCandidates, round, state?.likes, memberId, code, refresh],
+  );
+
   const useFallback = useCallback(() => {
-    const likeCounts = new Map<string, number>();
-    for (const l of state?.likes ?? []) {
-      if (l.round === round) likeCounts.set(l.place_id, (likeCounts.get(l.place_id) ?? 0) + 1);
-    }
-    const votes = new Map(picksByMember);
-    if (localPicks) votes.set(memberId, localPicks);
-    const ids = fallbackShortlist(mutualIds, likeCounts, votes);
-    if (ids.length) setFallbackIds(ids);
-  }, [mutualIds, state?.likes, round, picksByMember, localPicks, memberId]);
+    const isFinalStage = decision.stage === 'final_vote';
+    const candidates = isFinalStage ? decision.candidates : mutualIds;
+    const baseVotes = isFinalStage ? finalPicksByMember : narrowPicksByMember;
+    const local = isFinalStage ? localPicks.final : localPicks.narrow;
+    const votes = new Map(baseVotes);
+    if (local) votes.set(memberId, local);
+    const id = fallbackWinner(candidates, swipeLikeCounts, votes, seed);
+    if (id) setFallbackWinnerId(id);
+  }, [decision, mutualIds, finalPicksByMember, narrowPicksByMember, localPicks, memberId, swipeLikeCounts, seed]);
 
   return {
     status,
@@ -534,8 +615,7 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     finished: deckDone,
     matches,
     phase,
-    resolution,
-    fallbackIds,
+    decision,
     pickError,
     savingPicks,
     pendingFriends,
@@ -566,6 +646,7 @@ export function useFriendSession(code: string, data: RestaurantData | null) {
     stopSwiping,
     resumeSwiping,
     submitPicks,
+    submitFinalPick,
     continueAlone: () => setDecideAlone(true),
     useFallback,
     newRound,

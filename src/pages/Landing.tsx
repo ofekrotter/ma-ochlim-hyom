@@ -6,7 +6,7 @@ import { useFlow } from '../state/flow';
 const FEATURES = [
   { emoji: '🎯', title: 'סינון חכם', text: 'מרחק, מחיר, סוג אוכל — ורק מה שפתוח' },
   { emoji: '👆', title: 'החלקה ימינה ושמאלה', text: 'ימינה אהבתי, שמאלה דלג' },
-  { emoji: '💘', title: 'עם חברים', text: 'קבוצה של עד 6, ואז 1–3 מקומות' },
+  { emoji: '💘', title: 'עם חברים', text: 'קבוצה של עד 6, ובסוף מנצח אחד' },
 ];
 
 const MINI = [
@@ -27,7 +27,7 @@ export default function Landing() {
           </div>
         ))}
         <div className="absolute bottom-0 left-1/2 -translate-x-1/2 rounded-full bg-basil px-3 py-1 text-sm font-bold text-white shadow anim-pop" style={{ animationDelay: '400ms' }}>
-          1–3 מקומות 🍽️
+          מסעדה אחת מנצחת 🍽️
         </div>
       </div>
 
